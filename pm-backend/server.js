@@ -1,0 +1,64 @@
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import cookieParser from "cookie-parser";
+import path from "path";
+import { fileURLToPath } from "url";
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 4000;
+
+// Get __dirname equivalent in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+//Middleware (Cookie Parser, CORS, JSON Parsing)
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    credentials: true, // Allow cookies to be sent
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// Serve static files for uploaded profile pictures
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+//Routes
+app.get("/", (req, res) => {
+  res.send("PM Log Backend is running");
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+
+  // Handle Multer errors (file upload errors)
+  if (err.code === "LIMIT_FILE_SIZE") {
+    return res.status(400).json({
+      error: "File too large. Maximum size is 5MB",
+    });
+  }
+  if (err.message === "Only image files are allowed!") {
+    return res.status(400).json({
+      error: err.message,
+    });
+  }
+
+  res.status(500).json({ error: "Internal Server Error" });
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(
+    `Frontend URL: ${process.env.FRONTEND_URL || "http://localhost:3000"}`,
+  );
+});
