@@ -4,6 +4,8 @@ import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import path from "path";
 import { fileURLToPath } from "url";
+import authRoutes from "./routes/auth.js";
+import { authenticateToken, isAdmin } from "./middleware/auth.js";
 
 dotenv.config();
 
@@ -35,6 +37,9 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.get("/", (req, res) => {
   res.send("PM Log Backend is running");
 });
+
+// Auth routes
+app.use("/api/auth", authRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
