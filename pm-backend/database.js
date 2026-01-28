@@ -48,6 +48,22 @@ db.exec(`
   )
 `);
 
+// Create devices table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS devices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_name TEXT NOT NULL,
+    serial_number TEXT UNIQUE NOT NULL,
+    manufacturer TEXT NOT NULL,
+    device_id TEXT UNIQUE NOT NULL,
+    date_purchased TEXT NOT NULL,
+    responsible_person TEXT NOT NULL,
+    location TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )
+`);
+
 // Create index for faster password history queries
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_password_history_user_id ON password_history(user_id);
@@ -59,6 +75,13 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
   CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
   CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
+`);
+
+// Create index for faster device queries
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_devices_serial_number ON devices(serial_number);
+  CREATE INDEX IF NOT EXISTS idx_devices_device_id ON devices(device_id);
+  CREATE INDEX IF NOT EXISTS idx_devices_responsible_person ON devices(responsible_person);
 `);
 
 console.log("Connected to PM Log Database");
