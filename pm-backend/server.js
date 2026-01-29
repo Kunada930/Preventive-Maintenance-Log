@@ -6,6 +6,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import authRoutes from "./routes/auth.js";
 import devicesRoutes from "./routes/devices.js";
+import pmChecklistRoutes from "./routes/pm-checklist.js";
 import { authenticateToken, isAdmin } from "./middleware/auth.js";
 
 dotenv.config();
@@ -44,6 +45,9 @@ app.use("/api/auth", authRoutes);
 
 // Devices routes
 app.use("/api/devices", devicesRoutes);
+
+// PM Checklist routes
+app.use("/api/pm-checklists", pmChecklistRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

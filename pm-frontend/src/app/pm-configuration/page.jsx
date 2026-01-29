@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import PageBreadcrumb from "@/components/PageBreadcrumb";
 import DeviceManagement from "@/components/devices/DeviceManagement";
+import PMChecklistManagement from "@/components/checklist/pmChecklistManagement";
 
 export default function DevicesPage() {
   const [activeTab, setActiveTab] = useState("devices");
@@ -47,9 +48,7 @@ export default function DevicesPage() {
           </TabsContent>
 
           <TabsContent value="checklist" className="space-y-4">
-            <div className="text-center py-12 text-muted-foreground">
-              PM Checklist coming soon...
-            </div>
+            <PMChecklistManagement />
           </TabsContent>
         </Tabs>
       </div>
