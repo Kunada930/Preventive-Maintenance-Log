@@ -6,6 +6,14 @@ const router = express.Router();
 
 // Helper function to format checklist response
 function formatChecklistResponse(checklist) {
+  // Parse maintenance_type if it's a JSON string
+  let maintenanceType = checklist.maintenance_type;
+  try {
+    maintenanceType = JSON.parse(checklist.maintenance_type);
+  } catch (e) {
+    // If it's not JSON, keep it as is (for backward compatibility)
+  }
+
   return {
     id: checklist.id,
     deviceId: checklist.device_id,
@@ -16,7 +24,7 @@ function formatChecklistResponse(checklist) {
     datePurchased: checklist.date_purchased,
     responsiblePerson: checklist.responsible_person,
     location: checklist.location,
-    maintenanceType: checklist.maintenance_type,
+    maintenanceType: maintenanceType,
     taskFrequency: checklist.task_frequency,
     createdAt: checklist.created_at,
     updatedAt: checklist.updated_at,
@@ -92,7 +100,7 @@ router.get("/:id", authenticateToken, (req, res) => {
   }
 });
 
-// Create new checklist (UPDATED TO HANDLE MULTIPLE MAINTENANCE TYPES)
+// Create new checklist (ONE CHECKLIST WITH MULTIPLE MAINTENANCE TYPES)
 router.post("/", authenticateToken, (req, res) => {
   const { deviceId, maintenanceTypes, taskFrequency, tasks } = req.body;
 
@@ -168,6 +176,9 @@ router.post("/", authenticateToken, (req, res) => {
       });
     }
 
+    // Convert maintenance types array to JSON string for storage
+    const maintenanceTypesJson = JSON.stringify(maintenanceTypes);
+
     // Prepare statements
     const insertChecklist = db.prepare(`
       INSERT INTO pm_checklists (
@@ -190,64 +201,50 @@ router.post("/", authenticateToken, (req, res) => {
       VALUES (?, ?)
     `);
 
-    // Create separate checklist for each maintenance type
-    const createdChecklists = [];
-
+    // Create ONE checklist with all maintenance types
     const transaction = db.transaction(() => {
-      for (const maintenanceType of maintenanceTypes) {
-        // Insert checklist
-        const checklistResult = insertChecklist.run(
-          device.id,
-          device.device_name,
-          device.serial_number,
-          device.manufacturer,
-          device.device_id,
-          device.date_purchased,
-          device.responsible_person,
-          device.location,
-          maintenanceType,
-          taskFrequency,
-        );
+      // Insert single checklist with JSON array of maintenance types
+      const checklistResult = insertChecklist.run(
+        device.id,
+        device.device_name,
+        device.serial_number,
+        device.manufacturer,
+        device.device_id,
+        device.date_purchased,
+        device.responsible_person,
+        device.location,
+        maintenanceTypesJson,
+        taskFrequency,
+      );
 
-        const checklistId = checklistResult.lastInsertRowid;
+      const checklistId = checklistResult.lastInsertRowid;
 
-        // Insert all tasks for this checklist
-        for (const task of tasks) {
-          if (!task.taskDescription || task.taskDescription.trim() === "") {
-            throw new Error("Task description cannot be empty");
-          }
-          insertTask.run(checklistId, task.taskDescription);
+      // Insert all tasks for this checklist
+      for (const task of tasks) {
+        if (!task.taskDescription || task.taskDescription.trim() === "") {
+          throw new Error("Task description cannot be empty");
         }
-
-        createdChecklists.push(checklistId);
+        insertTask.run(checklistId, task.taskDescription);
       }
 
-      return createdChecklists;
+      return checklistId;
     });
 
-    const checklistIds = transaction();
+    const checklistId = transaction();
 
-    // Get all newly created checklists with their tasks
-    const responseChecklists = checklistIds.map((id) => {
-      const checklist = db
-        .prepare("SELECT * FROM pm_checklists WHERE id = ?")
-        .get(id);
+    // Get the newly created checklist with tasks
+    const checklist = db
+      .prepare("SELECT * FROM pm_checklists WHERE id = ?")
+      .get(checklistId);
 
-      const checklistTasks = db
-        .prepare(
-          "SELECT * FROM pm_tasks WHERE checklist_id = ? ORDER BY id ASC",
-        )
-        .all(id);
-
-      return {
-        checklist: formatChecklistResponse(checklist),
-        tasks: checklistTasks.map(formatTaskResponse),
-      };
-    });
+    const checklistTasks = db
+      .prepare("SELECT * FROM pm_tasks WHERE checklist_id = ? ORDER BY id ASC")
+      .all(checklistId);
 
     res.status(201).json({
-      message: `${checklistIds.length} checklist(s) created successfully`,
-      checklists: responseChecklists,
+      message: "Checklist created successfully",
+      checklist: formatChecklistResponse(checklist),
+      tasks: checklistTasks.map(formatTaskResponse),
     });
   } catch (error) {
     console.error("Create checklist error:", error);
@@ -261,7 +258,7 @@ router.post("/", authenticateToken, (req, res) => {
 // Update checklist (basic info only)
 router.put("/:id", authenticateToken, (req, res) => {
   const { id } = req.params;
-  const { maintenanceType, taskFrequency } = req.body;
+  const { maintenanceTypes, taskFrequency } = req.body;
 
   try {
     // Check if checklist exists
@@ -276,8 +273,15 @@ router.put("/:id", authenticateToken, (req, res) => {
       });
     }
 
-    // Validate maintenance type if provided
-    if (maintenanceType) {
+    // Validate maintenance types if provided
+    if (maintenanceTypes) {
+      if (!Array.isArray(maintenanceTypes) || maintenanceTypes.length === 0) {
+        return res.status(400).json({
+          error: "Maintenance types must be a non-empty array",
+          code: "INVALID_MAINTENANCE_TYPES",
+        });
+      }
+
       const validMaintenanceTypes = [
         "Hardware Maintenance",
         "Software Maintenance",
@@ -286,12 +290,14 @@ router.put("/:id", authenticateToken, (req, res) => {
         "Power Source",
         "Performance and Optimization",
       ];
-      if (!validMaintenanceTypes.includes(maintenanceType)) {
-        return res.status(400).json({
-          error:
-            "Invalid maintenance type. Must be: Hardware Maintenance, Software Maintenance, Storage Maintenance, Network and Connectivity, Power Source, or Performance and Optimization",
-          code: "INVALID_MAINTENANCE_TYPE",
-        });
+
+      for (const type of maintenanceTypes) {
+        if (!validMaintenanceTypes.includes(type)) {
+          return res.status(400).json({
+            error: `Invalid maintenance type: ${type}`,
+            code: "INVALID_MAINTENANCE_TYPE",
+          });
+        }
       }
     }
 
@@ -313,6 +319,11 @@ router.put("/:id", authenticateToken, (req, res) => {
       }
     }
 
+    // Convert maintenance types to JSON if provided
+    const maintenanceTypesJson = maintenanceTypes
+      ? JSON.stringify(maintenanceTypes)
+      : null;
+
     // Update checklist
     db.prepare(
       `
@@ -322,7 +333,7 @@ router.put("/:id", authenticateToken, (req, res) => {
           updated_at = datetime('now')
       WHERE id = ?
     `,
-    ).run(maintenanceType || null, taskFrequency || null, id);
+    ).run(maintenanceTypesJson, taskFrequency || null, id);
 
     // Get updated checklist
     const updatedChecklist = db

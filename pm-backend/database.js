@@ -65,6 +65,7 @@ db.exec(`
 `);
 
 // Create pm_checklists table
+// NOTE: maintenance_type now stores JSON array of types, so CHECK constraint is removed
 db.exec(`
   CREATE TABLE IF NOT EXISTS pm_checklists (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +77,7 @@ db.exec(`
     date_purchased TEXT NOT NULL,
     responsible_person TEXT NOT NULL,
     location TEXT NOT NULL,
-    maintenance_type TEXT NOT NULL CHECK(maintenance_type IN ('Hardware Maintenance', 'Software Maintenance', 'Storage Maintenance', 'Network and Connectivity', 'Power Source', 'Performance and Optimization')),
+    maintenance_type TEXT NOT NULL,
     task_frequency TEXT NOT NULL CHECK(task_frequency IN ('Daily', 'Weekly', 'Monthly', 'Quarterly', 'Annually')),
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now')),
@@ -97,6 +98,41 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (checklist_id) REFERENCES pm_checklists(id) ON DELETE CASCADE
+  )
+`);
+
+// Create pm_logs table - main preventive maintenance log record
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pm_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id INTEGER NOT NULL,
+    device_name TEXT NOT NULL,
+    serial_number TEXT NOT NULL,
+    manufacturer TEXT NOT NULL,
+    date TEXT NOT NULL,
+    fully_functional TEXT NOT NULL CHECK(fully_functional IN ('Yes', 'No')),
+    recommendation TEXT,
+    performed_by TEXT NOT NULL,
+    validated_by TEXT,
+    acknowledged_by TEXT,
+    findings_solutions TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+  )
+`);
+
+// Create pm_log_tasks table - description of work (tasks checked during PM)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pm_log_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pm_log_id INTEGER NOT NULL,
+    task_description TEXT NOT NULL,
+    maintenance_type TEXT NOT NULL,
+    is_checked INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (pm_log_id) REFERENCES pm_logs(id) ON DELETE CASCADE
   )
 `);
 
@@ -132,6 +168,20 @@ db.exec(`
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_pm_tasks_checklist_id ON pm_tasks(checklist_id);
   CREATE INDEX IF NOT EXISTS idx_pm_tasks_is_completed ON pm_tasks(is_completed);
+`);
+
+// Create index for faster PM log queries
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_pm_logs_device_id ON pm_logs(device_id);
+  CREATE INDEX IF NOT EXISTS idx_pm_logs_date ON pm_logs(date);
+  CREATE INDEX IF NOT EXISTS idx_pm_logs_fully_functional ON pm_logs(fully_functional);
+  CREATE INDEX IF NOT EXISTS idx_pm_logs_performed_by ON pm_logs(performed_by);
+`);
+
+// Create index for faster PM log task queries
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_pm_log_tasks_pm_log_id ON pm_log_tasks(pm_log_id);
+  CREATE INDEX IF NOT EXISTS idx_pm_log_tasks_is_checked ON pm_log_tasks(is_checked);
 `);
 
 console.log("Connected to PM Log Database");

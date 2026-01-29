@@ -79,7 +79,23 @@ export default function ViewChecklistDialog({ open, onOpenChange, checklist }) {
     }
   };
 
+  // Helper to get maintenance types as array
+  const getMaintenanceTypesArray = (maintenanceType) => {
+    if (Array.isArray(maintenanceType)) return maintenanceType;
+    if (typeof maintenanceType === "string") {
+      try {
+        const parsed = JSON.parse(maintenanceType);
+        return Array.isArray(parsed) ? parsed : [maintenanceType];
+      } catch {
+        return [maintenanceType];
+      }
+    }
+    return [];
+  };
+
   if (!checklist) return null;
+
+  const maintenanceTypes = getMaintenanceTypesArray(checklist.maintenanceType);
 
   return (
     <>
@@ -136,10 +152,18 @@ export default function ViewChecklistDialog({ open, onOpenChange, checklist }) {
               <h3 className="text-sm font-semibold mb-2">
                 Maintenance Information
               </h3>
-              <InfoRow
-                label="Maintenance Type"
-                value={checklist.maintenanceType}
-              />
+              <div className="flex justify-between items-start py-3">
+                <span className="text-sm font-medium text-muted-foreground">
+                  Maintenance Types
+                </span>
+                <div className="flex flex-wrap gap-2 justify-end max-w-md">
+                  {maintenanceTypes.map((type, index) => (
+                    <Badge key={index} variant="secondary">
+                      {type}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
               <Separator />
               <InfoRow label="Task Frequency" value={checklist.taskFrequency} />
               <Separator />

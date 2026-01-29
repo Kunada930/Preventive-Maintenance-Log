@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Plus, X } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -24,6 +25,15 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import AlertDialogComponent from "@/components/AlertDialog";
 
+const MAINTENANCE_TYPES = [
+  "Hardware Maintenance",
+  "Software Maintenance",
+  "Storage Maintenance",
+  "Network and Connectivity",
+  "Power Source",
+  "Performance and Optimization",
+];
+
 export default function EditChecklistDialog({
   open,
   onOpenChange,
@@ -33,7 +43,7 @@ export default function EditChecklistDialog({
   const [loading, setLoading] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
   const [formData, setFormData] = useState({
-    maintenanceType: "",
+    maintenanceTypes: [],
     taskFrequency: "",
   });
   const [tasks, setTasks] = useState([]);
@@ -48,6 +58,20 @@ export default function EditChecklistDialog({
 
   const showAlert = (title, description, variant = "default") => {
     setAlertDialog({ open: true, title, description, variant });
+  };
+
+  // Helper to get maintenance types as array
+  const getMaintenanceTypesArray = (maintenanceType) => {
+    if (Array.isArray(maintenanceType)) return maintenanceType;
+    if (typeof maintenanceType === "string") {
+      try {
+        const parsed = JSON.parse(maintenanceType);
+        return Array.isArray(parsed) ? parsed : [maintenanceType];
+      } catch {
+        return [maintenanceType];
+      }
+    }
+    return [];
   };
 
   useEffect(() => {
@@ -66,8 +90,11 @@ export default function EditChecklistDialog({
 
       if (response.ok) {
         const data = await response.json();
+        const maintenanceTypes = getMaintenanceTypesArray(
+          data.checklist.maintenanceType,
+        );
         setFormData({
-          maintenanceType: data.checklist.maintenanceType || "",
+          maintenanceTypes: maintenanceTypes,
           taskFrequency: data.checklist.taskFrequency || "",
         });
         const taskList =
@@ -106,6 +133,19 @@ export default function EditChecklistDialog({
     }
   };
 
+  const handleMaintenanceTypeToggle = (type) => {
+    setFormData((prev) => {
+      const currentTypes = prev.maintenanceTypes || [];
+      const newTypes = currentTypes.includes(type)
+        ? currentTypes.filter((t) => t !== type)
+        : [...currentTypes, type];
+      return { ...prev, maintenanceTypes: newTypes };
+    });
+    if (errors.maintenanceTypes) {
+      setErrors((prev) => ({ ...prev, maintenanceTypes: "" }));
+    }
+  };
+
   const handleTaskChange = (index, value) => {
     const newTasks = [...tasks];
     newTasks[index].taskDescription = value;
@@ -133,8 +173,8 @@ export default function EditChecklistDialog({
   const validateForm = () => {
     const newErrors = {};
 
-    if (!formData.maintenanceType) {
-      newErrors.maintenanceType = "Maintenance type is required";
+    if (!formData.maintenanceTypes || formData.maintenanceTypes.length === 0) {
+      newErrors.maintenanceTypes = "At least one maintenance type is required";
     }
 
     if (!formData.taskFrequency) {
@@ -169,7 +209,7 @@ export default function EditChecklistDialog({
         {
           method: "PUT",
           body: JSON.stringify({
-            maintenanceType: formData.maintenanceType,
+            maintenanceTypes: formData.maintenanceTypes,
             taskFrequency: formData.taskFrequency,
           }),
         },
@@ -343,46 +383,39 @@ export default function EditChecklistDialog({
                   </div>
                 </div>
 
-                {/* Maintenance Type */}
+                {/* Maintenance Types */}
                 <div className="grid gap-2">
-                  <Label htmlFor="maintenanceType">
-                    Maintenance Type <span className="text-destructive">*</span>
+                  <Label>
+                    Maintenance Types{" "}
+                    <span className="text-destructive">*</span>
+                    <span className="text-xs text-muted-foreground ml-2">
+                      (Select all that apply)
+                    </span>
                   </Label>
-                  <Select
-                    value={formData.maintenanceType}
-                    onValueChange={(value) =>
-                      handleChange("maintenanceType", value)
-                    }
+                  <div
+                    className={`grid grid-cols-2 gap-3 p-4 border rounded-lg ${errors.maintenanceTypes ? "border-destructive" : ""}`}
                   >
-                    <SelectTrigger
-                      className={
-                        errors.maintenanceType ? "border-destructive" : ""
-                      }
-                    >
-                      <SelectValue placeholder="Select maintenance type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Hardware Maintenance">
-                        Hardware Maintenance
-                      </SelectItem>
-                      <SelectItem value="Software Maintenance">
-                        Software Maintenance
-                      </SelectItem>
-                      <SelectItem value="Storage Maintenance">
-                        Storage Maintenance
-                      </SelectItem>
-                      <SelectItem value="Network and Connectivity">
-                        Network and Connectivity
-                      </SelectItem>
-                      <SelectItem value="Power Source">Power Source</SelectItem>
-                      <SelectItem value="Performance and Optimization">
-                        Performance and Optimization
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {errors.maintenanceType && (
+                    {MAINTENANCE_TYPES.map((type) => (
+                      <div key={type} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={type}
+                          checked={formData.maintenanceTypes?.includes(type)}
+                          onCheckedChange={() =>
+                            handleMaintenanceTypeToggle(type)
+                          }
+                        />
+                        <label
+                          htmlFor={type}
+                          className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                        >
+                          {type}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                  {errors.maintenanceTypes && (
                     <p className="text-sm text-destructive">
-                      {errors.maintenanceType}
+                      {errors.maintenanceTypes}
                     </p>
                   )}
                 </div>
