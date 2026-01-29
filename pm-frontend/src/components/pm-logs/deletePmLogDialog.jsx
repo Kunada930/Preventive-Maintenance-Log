@@ -13,11 +13,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Loader2 } from "lucide-react";
 import AlertDialogComponent from "@/components/AlertDialog";
+import { formatPhilippineDateTime } from "@/lib/dateUtils";
 
-export default function DeleteChecklistDialog({
+export default function DeletePMLogDialog({
   open,
   onOpenChange,
-  checklist,
+  log,
   onSuccess,
 }) {
   const [loading, setLoading] = useState(false);
@@ -32,29 +33,15 @@ export default function DeleteChecklistDialog({
     setAlertDialog({ open: true, title, description, variant });
   };
 
-  // Helper to get maintenance types as array
-  const getMaintenanceTypesArray = (maintenanceType) => {
-    if (Array.isArray(maintenanceType)) return maintenanceType;
-    if (typeof maintenanceType === "string") {
-      try {
-        const parsed = JSON.parse(maintenanceType);
-        return Array.isArray(parsed) ? parsed : [maintenanceType];
-      } catch {
-        return [maintenanceType];
-      }
-    }
-    return [];
-  };
-
   const handleDelete = async () => {
-    if (!checklist) return;
+    if (!log) return;
 
     setLoading(true);
 
     try {
       const baseUrl = process.env.NEXT_PUBLIC_API_URL;
       const response = await authService.fetchWithAuth(
-        `${baseUrl}/api/pm-checklists/${checklist.id}`,
+        `${baseUrl}/api/pm-logs/${log.id}`,
         {
           method: "DELETE",
         },
@@ -63,7 +50,7 @@ export default function DeleteChecklistDialog({
       const data = await response.json();
 
       if (response.ok) {
-        showAlert("Success", "Checklist deleted successfully", "default");
+        showAlert("Success", "PM log deleted successfully", "default");
         onSuccess?.();
         setTimeout(() => {
           onOpenChange(false);
@@ -71,15 +58,15 @@ export default function DeleteChecklistDialog({
       } else {
         showAlert(
           "Error",
-          data.error || "Failed to delete checklist",
+          data.error || "Failed to delete PM log",
           "destructive",
         );
       }
     } catch (error) {
-      console.error("Delete checklist error:", error);
+      console.error("Delete PM log error:", error);
       showAlert(
         "Error",
-        "An error occurred while deleting checklist",
+        "An error occurred while deleting PM log",
         "destructive",
       );
     } finally {
@@ -87,13 +74,7 @@ export default function DeleteChecklistDialog({
     }
   };
 
-  if (!checklist) return null;
-
-  const maintenanceTypes = getMaintenanceTypesArray(checklist.maintenanceType);
-  const maintenanceTypeString =
-    maintenanceTypes.length > 1
-      ? `${maintenanceTypes.slice(0, -1).join(", ")} and ${maintenanceTypes[maintenanceTypes.length - 1]}`
-      : maintenanceTypes[0];
+  if (!log) return null;
 
   return (
     <>
@@ -102,17 +83,20 @@ export default function DeleteChecklistDialog({
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete the checklist for{" "}
+              This will permanently delete the PM log for{" "}
               <span className="font-semibold text-foreground">
-                {checklist.deviceName}
+                {log.deviceName}
               </span>{" "}
-              (Serial: {checklist.serialNumber}) with maintenance type
-              {maintenanceTypes.length > 1 ? "s" : ""}{" "}
+              (Serial: {log.serialNumber}) performed on{" "}
               <span className="font-semibold text-foreground">
-                {maintenanceTypeString}
+                {formatPhilippineDateTime(log.date, {
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                })}
               </span>
-              . All associated tasks will also be deleted. This action cannot be
-              undone.
+              . All associated tasks and data will also be deleted. This action
+              cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -128,7 +112,7 @@ export default function DeleteChecklistDialog({
                   Deleting...
                 </>
               ) : (
-                "Delete Checklist"
+                "Delete PM Log"
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

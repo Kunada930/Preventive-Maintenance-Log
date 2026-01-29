@@ -118,9 +118,28 @@ const PMChecklistManagement = () => {
     return variants[frequency] || "outline";
   };
 
+  // Helper to get maintenance types as array
+  const getMaintenanceTypesArray = (maintenanceType) => {
+    if (Array.isArray(maintenanceType)) return maintenanceType;
+    if (typeof maintenanceType === "string") {
+      try {
+        const parsed = JSON.parse(maintenanceType);
+        return Array.isArray(parsed) ? parsed : [maintenanceType];
+      } catch {
+        return [maintenanceType];
+      }
+    }
+    return [];
+  };
+
   const filteredChecklists = checklists.filter((checklist) => {
+    const maintenanceTypes = getMaintenanceTypesArray(
+      checklist.maintenanceType,
+    );
+    const maintenanceTypeString = maintenanceTypes.join(" ");
+
     const matchesSearch =
-      `${checklist.deviceName} ${checklist.serialNumber} ${checklist.manufacturer} ${checklist.deviceIdNumber} ${checklist.responsiblePerson} ${checklist.location} ${checklist.maintenanceType}`
+      `${checklist.deviceName} ${checklist.serialNumber} ${checklist.manufacturer} ${checklist.deviceIdNumber} ${checklist.responsiblePerson} ${checklist.location} ${maintenanceTypeString}`
         .toLowerCase()
         .includes(searchTerm.toLowerCase());
 
@@ -129,7 +148,7 @@ const PMChecklistManagement = () => {
 
     const matchesMaintenanceType =
       filterMaintenanceType === "all" ||
-      checklist.maintenanceType === filterMaintenanceType;
+      maintenanceTypes.includes(filterMaintenanceType);
 
     return matchesSearch && matchesFrequency && matchesMaintenanceType;
   });
@@ -222,7 +241,7 @@ const PMChecklistManagement = () => {
                   <TableRow>
                     <TableHead>Device Name</TableHead>
                     <TableHead>Serial Number</TableHead>
-                    <TableHead>Maintenance Type</TableHead>
+                    <TableHead>Maintenance Types</TableHead>
                     <TableHead>Frequency</TableHead>
                     <TableHead>Responsible Person</TableHead>
                     <TableHead>Location</TableHead>
@@ -245,71 +264,86 @@ const PMChecklistManagement = () => {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredChecklists.map((checklist) => (
-                      <TableRow
-                        key={checklist.id}
-                        className="hover:bg-muted/50"
-                      >
-                        <TableCell className="font-medium text-foreground">
-                          {checklist.deviceName}
-                        </TableCell>
-                        <TableCell className="text-foreground">
-                          <Badge variant="outline">
-                            {checklist.serialNumber}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {checklist.maintenanceType}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={getFrequencyBadgeVariant(
-                              checklist.taskFrequency,
-                            )}
-                          >
-                            {checklist.taskFrequency}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {checklist.responsiblePerson}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {checklist.location}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {formatPhilippineDateTime(checklist.createdAt, {
-                            year: "numeric",
-                            month: "short",
-                            day: "numeric",
-                          })}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleView(checklist)}
+                    filteredChecklists.map((checklist) => {
+                      const maintenanceTypes = getMaintenanceTypesArray(
+                        checklist.maintenanceType,
+                      );
+                      return (
+                        <TableRow
+                          key={checklist.id}
+                          className="hover:bg-muted/50"
+                        >
+                          <TableCell className="font-medium text-foreground">
+                            {checklist.deviceName}
+                          </TableCell>
+                          <TableCell className="text-foreground">
+                            <Badge variant="outline">
+                              {checklist.serialNumber}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-1">
+                              {maintenanceTypes.map((type, index) => (
+                                <Badge
+                                  key={index}
+                                  variant="secondary"
+                                  className="text-xs"
+                                >
+                                  {type}
+                                </Badge>
+                              ))}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={getFrequencyBadgeVariant(
+                                checklist.taskFrequency,
+                              )}
                             >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleEdit(checklist)}
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleDelete(checklist)}
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
+                              {checklist.taskFrequency}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {checklist.responsiblePerson}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {checklist.location}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {formatPhilippineDateTime(checklist.createdAt, {
+                              year: "numeric",
+                              month: "short",
+                              day: "numeric",
+                            })}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleView(checklist)}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleEdit(checklist)}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleDelete(checklist)}
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
                   )}
                 </TableBody>
               </Table>
