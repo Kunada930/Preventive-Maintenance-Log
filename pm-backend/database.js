@@ -64,6 +64,42 @@ db.exec(`
   )
 `);
 
+// Create pm_checklists table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pm_checklists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id INTEGER NOT NULL,
+    device_name TEXT NOT NULL,
+    serial_number TEXT NOT NULL,
+    manufacturer TEXT NOT NULL,
+    device_id_number TEXT NOT NULL,
+    date_purchased TEXT NOT NULL,
+    responsible_person TEXT NOT NULL,
+    location TEXT NOT NULL,
+    maintenance_type TEXT NOT NULL CHECK(maintenance_type IN ('Hardware Maintenance', 'Software Maintenance', 'Storage Maintenance', 'Network and Connectivity', 'Power Source', 'Performance and Optimization')),
+    task_frequency TEXT NOT NULL CHECK(task_frequency IN ('Daily', 'Weekly', 'Monthly', 'Quarterly', 'Annually')),
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+  )
+`);
+
+// Create pm_tasks table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pm_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    checklist_id INTEGER NOT NULL,
+    task_description TEXT NOT NULL,
+    is_completed INTEGER DEFAULT 0,
+    completed_by TEXT,
+    completed_at TEXT,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (checklist_id) REFERENCES pm_checklists(id) ON DELETE CASCADE
+  )
+`);
+
 // Create index for faster password history queries
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_password_history_user_id ON password_history(user_id);
@@ -82,6 +118,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_devices_serial_number ON devices(serial_number);
   CREATE INDEX IF NOT EXISTS idx_devices_device_id ON devices(device_id);
   CREATE INDEX IF NOT EXISTS idx_devices_responsible_person ON devices(responsible_person);
+`);
+
+// Create index for faster PM checklist queries
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_pm_checklists_device_id ON pm_checklists(device_id);
+  CREATE INDEX IF NOT EXISTS idx_pm_checklists_maintenance_type ON pm_checklists(maintenance_type);
+  CREATE INDEX IF NOT EXISTS idx_pm_checklists_task_frequency ON pm_checklists(task_frequency);
+  CREATE INDEX IF NOT EXISTS idx_pm_checklists_created_at ON pm_checklists(created_at);
+`);
+
+// Create index for faster PM task queries
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_pm_tasks_checklist_id ON pm_tasks(checklist_id);
+  CREATE INDEX IF NOT EXISTS idx_pm_tasks_is_completed ON pm_tasks(is_completed);
 `);
 
 console.log("Connected to PM Log Database");
