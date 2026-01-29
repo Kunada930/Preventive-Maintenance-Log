@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 import authRoutes from "./routes/auth.js";
 import devicesRoutes from "./routes/devices.js";
 import pmChecklistRoutes from "./routes/pm-checklist.js";
+import usersRoutes from "./routes/usersRoutes.js";
 import { authenticateToken, isAdmin } from "./middleware/auth.js";
 
 dotenv.config();
@@ -42,6 +43,9 @@ app.get("/", (req, res) => {
 
 // Auth routes
 app.use("/api/auth", authRoutes);
+
+// Users routes (protected, admin only)
+app.use("/api/users", authenticateToken, isAdmin, usersRoutes);
 
 // Devices routes
 app.use("/api/devices", devicesRoutes);
