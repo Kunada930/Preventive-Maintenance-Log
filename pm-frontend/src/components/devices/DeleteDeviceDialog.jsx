@@ -86,7 +86,8 @@ export default function DeleteDeviceDialog({
               <span className="font-semibold text-foreground">
                 {device.deviceName}
               </span>{" "}
-              (Serial: {device.serialNumber}). This action cannot be undone.
+              (Serial: {device.serialNumber}), along with all associated tasks
+              and Preventive Maintenance Logs. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

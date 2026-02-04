@@ -13,7 +13,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2 } from "lucide-react";
+import { Loader2, CalendarIcon } from "lucide-react";
+import { format } from "date-fns";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -32,6 +39,7 @@ export default function EditPMLogDialog({
   onSuccess,
 }) {
   const [loading, setLoading] = useState(false);
+  const [date, setDate] = useState(null);
   const [formData, setFormData] = useState({
     date: "",
     fullyFunctional: "",
@@ -64,6 +72,9 @@ export default function EditPMLogDialog({
         acknowledgedBy: log.acknowledgedBy || "",
         findingsSolutions: log.findingsSolutions || "",
       });
+      if (log.date) {
+        setDate(new Date(log.date + "T00:00:00"));
+      }
       setErrors({});
     }
   }, [log, open]);
@@ -72,6 +83,17 @@ export default function EditPMLogDialog({
     setFormData((prev) => ({ ...prev, [name]: value }));
     if (errors[name]) {
       setErrors((prev) => ({ ...prev, [name]: "" }));
+    }
+  };
+
+  const handleDateChange = (selectedDate) => {
+    setDate(selectedDate);
+    setFormData((prev) => ({
+      ...prev,
+      date: selectedDate ? format(selectedDate, "yyyy-MM-dd") : "",
+    }));
+    if (errors.date) {
+      setErrors((prev) => ({ ...prev, date: "" }));
     }
   };
 
@@ -201,51 +223,70 @@ export default function EditPMLogDialog({
 
               <Separator />
 
-              {/* Date */}
-              <div className="grid gap-2">
-                <Label htmlFor="date">
-                  Date <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="date"
-                  type="date"
-                  value={formData.date}
-                  onChange={(e) => handleChange("date", e.target.value)}
-                  className={errors.date ? "border-destructive" : ""}
-                />
-                {errors.date && (
-                  <p className="text-sm text-destructive">{errors.date}</p>
-                )}
-              </div>
+              {/* Date and Device Status — aligned side by side */}
+              <div className="grid grid-cols-2 gap-4">
+                {/* Date */}
+                <div className="grid gap-2">
+                  <Label htmlFor="date">
+                    Date <span className="text-destructive">*</span>
+                  </Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={`h-10 w-full justify-start text-left font-normal ${
+                          !date && "text-muted-foreground"
+                        } ${errors.date ? "border-destructive" : ""}`}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {date ? format(date, "PPP") : "Pick a date"}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        defaultMonth={date}
+                        selected={date}
+                        onSelect={handleDateChange}
+                        captionLayout="dropdown"
+                        className="rounded-lg border shadow-sm"
+                      />
+                    </PopoverContent>
+                  </Popover>
+                  {errors.date && (
+                    <p className="text-sm text-destructive">{errors.date}</p>
+                  )}
+                </div>
 
-              {/* Status */}
-              <div className="grid gap-2">
-                <Label htmlFor="fullyFunctional">
-                  Device Status <span className="text-destructive">*</span>
-                </Label>
-                <Select
-                  value={formData.fullyFunctional}
-                  onValueChange={(value) =>
-                    handleChange("fullyFunctional", value)
-                  }
-                >
-                  <SelectTrigger
-                    className={
-                      errors.fullyFunctional ? "border-destructive" : ""
+                {/* Device Status */}
+                <div className="grid gap-2">
+                  <Label htmlFor="fullyFunctional">
+                    Device Status <span className="text-destructive">*</span>
+                  </Label>
+                  <Select
+                    value={formData.fullyFunctional}
+                    onValueChange={(value) =>
+                      handleChange("fullyFunctional", value)
                     }
                   >
-                    <SelectValue placeholder="Select device status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Yes">Fully Functional</SelectItem>
-                    <SelectItem value="No">Not Fully Functional</SelectItem>
-                  </SelectContent>
-                </Select>
-                {errors.fullyFunctional && (
-                  <p className="text-sm text-destructive">
-                    {errors.fullyFunctional}
-                  </p>
-                )}
+                    <SelectTrigger
+                      className={`h-10 ${
+                        errors.fullyFunctional ? "border-destructive" : ""
+                      }`}
+                    >
+                      <SelectValue placeholder="Select device status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Yes">Fully Functional</SelectItem>
+                      <SelectItem value="No">Not Fully Functional</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {errors.fullyFunctional && (
+                    <p className="text-sm text-destructive">
+                      {errors.fullyFunctional}
+                    </p>
+                  )}
+                </div>
               </div>
 
               {/* Personnel */}

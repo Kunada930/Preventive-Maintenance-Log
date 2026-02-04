@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Search, Eye, Trash2, Edit, FileText } from "lucide-react";
+import { Plus, Search, Eye, Trash2, Edit, CalendarIcon } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -27,12 +27,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { format } from "date-fns";
 import CreatePMLogDialog from "./createPmLogDialog";
 import ViewPMLogDialog from "./viewPmLogDialog";
 import EditPMLogDialog from "./editPmLogDialog";
 import DeletePMLogDialog from "./deletePmLogDialog";
 import AlertDialogComponent from "@/components/AlertDialog";
-import { formatPhilippineDateTime } from "@/lib/dateUtils";
+import { formatPhilippineDate } from "@/lib/dateUtils";
 
 const PMLogManagement = () => {
   const [logs, setLogs] = useState([]);
@@ -43,6 +50,10 @@ const PMLogManagement = () => {
     start: "",
     end: "",
   });
+  const [startDateObj, setStartDateObj] = useState(null);
+  const [endDateObj, setEndDateObj] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -125,6 +136,8 @@ const PMLogManagement = () => {
   const handleClearFilters = () => {
     setFilterStatus("all");
     setFilterDateRange({ start: "", end: "" });
+    setStartDateObj(null);
+    setEndDateObj(null);
     setSearchTerm("");
   };
 
@@ -140,6 +153,21 @@ const PMLogManagement = () => {
 
     return matchesSearch;
   });
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredLogs.length / itemsPerPage);
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentLogs = filteredLogs.slice(indexOfFirstItem, indexOfLastItem);
+
+  // Reset to page 1 when search or filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterStatus, filterDateRange.start, filterDateRange.end]);
+
+  const handlePageChange = (pageNumber) => {
+    setCurrentPage(pageNumber);
+  };
 
   return (
     <>
@@ -193,32 +221,72 @@ const PMLogManagement = () => {
                 <label className="text-sm font-medium mb-1.5 block">
                   Start Date
                 </label>
-                <Input
-                  type="date"
-                  value={filterDateRange.start}
-                  onChange={(e) =>
-                    setFilterDateRange((prev) => ({
-                      ...prev,
-                      start: e.target.value,
-                    }))
-                  }
-                />
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={`w-full justify-start text-left font-normal ${
+                        !startDateObj && "text-muted-foreground"
+                      }`}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {startDateObj
+                        ? format(startDateObj, "PPP")
+                        : "Pick a date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      defaultMonth={startDateObj}
+                      selected={startDateObj}
+                      onSelect={(date) => {
+                        setStartDateObj(date);
+                        setFilterDateRange((prev) => ({
+                          ...prev,
+                          start: date ? format(date, "yyyy-MM-dd") : "",
+                        }));
+                      }}
+                      captionLayout="dropdown"
+                      className="rounded-lg border shadow-sm"
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
 
               <div className="flex-1 min-w-[200px]">
                 <label className="text-sm font-medium mb-1.5 block">
                   End Date
                 </label>
-                <Input
-                  type="date"
-                  value={filterDateRange.end}
-                  onChange={(e) =>
-                    setFilterDateRange((prev) => ({
-                      ...prev,
-                      end: e.target.value,
-                    }))
-                  }
-                />
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={`w-full justify-start text-left font-normal ${
+                        !endDateObj && "text-muted-foreground"
+                      }`}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {endDateObj ? format(endDateObj, "PPP") : "Pick a date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      defaultMonth={endDateObj}
+                      selected={endDateObj}
+                      onSelect={(date) => {
+                        setEndDateObj(date);
+                        setFilterDateRange((prev) => ({
+                          ...prev,
+                          end: date ? format(date, "yyyy-MM-dd") : "",
+                        }));
+                      }}
+                      captionLayout="dropdown"
+                      className="rounded-lg border shadow-sm"
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
 
               <div className="flex gap-2">
@@ -252,7 +320,7 @@ const PMLogManagement = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredLogs.length === 0 ? (
+                  {currentLogs.length === 0 ? (
                     <TableRow>
                       <TableCell
                         colSpan={8}
@@ -267,10 +335,10 @@ const PMLogManagement = () => {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredLogs.map((log) => (
+                    currentLogs.map((log) => (
                       <TableRow key={log.id} className="hover:bg-muted/50">
                         <TableCell className="font-medium text-foreground">
-                          {formatPhilippineDateTime(log.date, {
+                          {formatPhilippineDate(log.date, {
                             year: "numeric",
                             month: "short",
                             day: "numeric",
@@ -330,6 +398,47 @@ const PMLogManagement = () => {
                   )}
                 </TableBody>
               </Table>
+            </div>
+          )}
+
+          {/* Pagination Controls */}
+          {!loading && filteredLogs.length > 0 && (
+            <div className="flex items-center justify-between mt-4">
+              <div className="text-sm text-muted-foreground">
+                Showing {indexOfFirstItem + 1} to{" "}
+                {Math.min(indexOfLastItem, filteredLogs.length)} of{" "}
+                {filteredLogs.length} PM logs
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                >
+                  Previous
+                </Button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map(
+                  (pageNum) => (
+                    <Button
+                      key={pageNum}
+                      variant={currentPage === pageNum ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => handlePageChange(pageNum)}
+                    >
+                      {pageNum}
+                    </Button>
+                  ),
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                >
+                  Next
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>

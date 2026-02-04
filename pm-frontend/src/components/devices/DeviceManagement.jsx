@@ -25,12 +25,14 @@ import EditDeviceDialog from "./EditDeviceDialog";
 import ViewDeviceDialog from "./ViewDeviceDialog";
 import DeleteDeviceDialog from "./DeleteDeviceDialog";
 import AlertDialogComponent from "@/components/AlertDialog";
-import { formatPhilippineDateTime } from "@/lib/dateUtils";
+import { formatPhilippineDate } from "@/lib/dateUtils";
 
 const DeviceManagement = () => {
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
@@ -107,6 +109,24 @@ const DeviceManagement = () => {
     return matchesSearch;
   });
 
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredDevices.length / itemsPerPage);
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentDevices = filteredDevices.slice(
+    indexOfFirstItem,
+    indexOfLastItem,
+  );
+
+  // Reset to page 1 when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
+
+  const handlePageChange = (pageNumber) => {
+    setCurrentPage(pageNumber);
+  };
+
   return (
     <>
       <Card>
@@ -148,7 +168,7 @@ const DeviceManagement = () => {
                   <TableRow>
                     <TableHead>Device Name</TableHead>
                     <TableHead>Serial Number</TableHead>
-                    <TableHead>Manufacturer</TableHead>
+                    {/* <TableHead>Manufacturer</TableHead> */}
                     <TableHead>Device ID</TableHead>
                     <TableHead>Responsible Person</TableHead>
                     <TableHead>Location</TableHead>
@@ -157,7 +177,7 @@ const DeviceManagement = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredDevices.length === 0 ? (
+                  {currentDevices.length === 0 ? (
                     <TableRow>
                       <TableCell
                         colSpan={8}
@@ -169,7 +189,7 @@ const DeviceManagement = () => {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredDevices.map((device) => (
+                    currentDevices.map((device) => (
                       <TableRow key={device.id} className="hover:bg-muted/50">
                         <TableCell className="font-medium text-foreground">
                           {device.deviceName}
@@ -177,9 +197,9 @@ const DeviceManagement = () => {
                         <TableCell className="text-foreground">
                           <Badge variant="outline">{device.serialNumber}</Badge>
                         </TableCell>
-                        <TableCell className="text-muted-foreground">
+                        {/* <TableCell className="text-muted-foreground">
                           {device.manufacturer}
-                        </TableCell>
+                        </TableCell> */}
                         <TableCell className="text-muted-foreground">
                           {device.deviceId}
                         </TableCell>
@@ -190,7 +210,7 @@ const DeviceManagement = () => {
                           {device.location}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
-                          {formatPhilippineDateTime(device.datePurchased, {
+                          {formatPhilippineDate(device.datePurchased, {
                             year: "numeric",
                             month: "short",
                             day: "numeric",
@@ -226,6 +246,47 @@ const DeviceManagement = () => {
                   )}
                 </TableBody>
               </Table>
+            </div>
+          )}
+
+          {/* Pagination Controls */}
+          {!loading && filteredDevices.length > 0 && (
+            <div className="flex items-center justify-between mt-4">
+              <div className="text-sm text-muted-foreground">
+                Showing {indexOfFirstItem + 1} to{" "}
+                {Math.min(indexOfLastItem, filteredDevices.length)} of{" "}
+                {filteredDevices.length} devices
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                >
+                  Previous
+                </Button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map(
+                  (pageNum) => (
+                    <Button
+                      key={pageNum}
+                      variant={currentPage === pageNum ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => handlePageChange(pageNum)}
+                    >
+                      {pageNum}
+                    </Button>
+                  ),
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                >
+                  Next
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
