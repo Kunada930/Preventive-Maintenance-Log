@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Loader2 } from "lucide-react";
 import AlertDialogComponent from "@/components/AlertDialog";
-import { formatPhilippineDateTime } from "@/lib/dateUtils";
+import { formatPhilippineDate } from "@/lib/dateUtils";
 
 export default function DeletePMLogDialog({
   open,
@@ -89,7 +89,7 @@ export default function DeletePMLogDialog({
               </span>{" "}
               (Serial: {log.serialNumber}) performed on{" "}
               <span className="font-semibold text-foreground">
-                {formatPhilippineDateTime(log.date, {
+                {formatPhilippineDate(log.date, {
                   year: "numeric",
                   month: "long",
                   day: "numeric",

@@ -1,21 +1,34 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
 import AppLayout from "@/components/AppLayout";
+import { authService } from "@/lib/auth";
 
 export default function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
+    // Check if this is PM history page with QR token
+    const qrToken = searchParams.get("token");
+    const isPMHistoryWithQR = pathname === "/pm-history" && qrToken;
+
+    // If PM history with QR token, store it and allow access
+    if (isPMHistoryWithQR) {
+      console.log("PM history with QR token detected - allowing public access");
+      authService.setQRToken(qrToken);
+      return; // Skip all other auth checks
+    }
+
     // Wait for auth check to complete
     if (loading) return;
 
     // Public routes that don't require authentication
-    const publicRoutes = ["/login", "/"];
+    const publicRoutes = ["/login", "/", "/pm-history"];
 
     // If no user and trying to access protected route
     if (!user && !publicRoutes.includes(pathname)) {
@@ -43,7 +56,16 @@ export default function ProtectedRoute({ children }) {
         router.push("/pm-logs");
       }
     }
-  }, [user, loading, pathname, router]);
+  }, [user, loading, pathname, searchParams, router]);
+
+  // Check for QR token access
+  const qrToken = searchParams.get("token");
+  const isPMHistoryWithQR = pathname === "/pm-history" && qrToken;
+
+  // Allow immediate render for PM history with QR token
+  if (isPMHistoryWithQR) {
+    return <>{children}</>;
+  }
 
   // Show loading spinner while checking auth
   if (loading) {
@@ -58,7 +80,12 @@ export default function ProtectedRoute({ children }) {
   }
 
   // Pages that should NOT have the sidebar
-  const pagesWithoutSidebar = ["/login", "/", "/change-password"];
+  const pagesWithoutSidebar = [
+    "/login",
+    "/",
+    "/change-password",
+    "/pm-history",
+  ];
   const shouldShowSidebar = user && !pagesWithoutSidebar.includes(pathname);
 
   // If user is authenticated and on a protected page, show with sidebar
@@ -66,6 +93,6 @@ export default function ProtectedRoute({ children }) {
     return <AppLayout>{children}</AppLayout>;
   }
 
-  // Otherwise render without sidebar (login, change password, etc.)
+  // Otherwise render without sidebar (login, change password, pm-history, etc.)
   return <>{children}</>;
 }

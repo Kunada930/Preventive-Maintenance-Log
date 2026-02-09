@@ -9,6 +9,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { formatPhilippineDateTime } from "@/lib/dateUtils";
+import { QRGenerator } from "@/components/devices/QRGenerator";
 
 // Helper component for info rows
 const InfoRow = ({ label, value, badge = false }) => (
@@ -99,6 +100,11 @@ export default function ViewDeviceDialog({ open, onOpenChange, device }) {
               minute: "2-digit",
             })}
           />
+        </div>
+
+        {/* QR Generator Section */}
+        <div className="flex justify-end pt-4 border-t">
+          <QRGenerator deviceId={device.id} deviceName={device.deviceName} />
         </div>
       </DialogContent>
     </Dialog>
