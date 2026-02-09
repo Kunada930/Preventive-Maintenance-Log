@@ -65,7 +65,6 @@ db.exec(`
 `);
 
 // Create pm_checklists table
-// NOTE: maintenance_type now stores JSON array of types, so CHECK constraint is removed
 db.exec(`
   CREATE TABLE IF NOT EXISTS pm_checklists (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -136,6 +135,24 @@ db.exec(`
   )
 `);
 
+// ============================================
+// NEW: QR Tokens Table for Device History Access
+// ============================================
+db.exec(`
+  CREATE TABLE IF NOT EXISTS qr_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT UNIQUE NOT NULL,
+    device_id INTEGER NOT NULL,
+    generated_by INTEGER NOT NULL,
+    expires_at TEXT NOT NULL,
+    access_count INTEGER DEFAULT 0,
+    last_accessed_at TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
+    FOREIGN KEY (generated_by) REFERENCES users(id) ON DELETE CASCADE
+  )
+`);
+
 // Create index for faster password history queries
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_password_history_user_id ON password_history(user_id);
@@ -182,6 +199,13 @@ db.exec(`
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_pm_log_tasks_pm_log_id ON pm_log_tasks(pm_log_id);
   CREATE INDEX IF NOT EXISTS idx_pm_log_tasks_is_checked ON pm_log_tasks(is_checked);
+`);
+
+// Create index for faster QR token queries
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_qr_tokens_token ON qr_tokens(token);
+  CREATE INDEX IF NOT EXISTS idx_qr_tokens_device_id ON qr_tokens(device_id);
+  CREATE INDEX IF NOT EXISTS idx_qr_tokens_expires_at ON qr_tokens(expires_at);
 `);
 
 console.log("Connected to PM Log Database");

@@ -37,6 +37,61 @@ function formatPMLogTaskResponse(task) {
   };
 }
 
+// Middleware to validate QR token OR regular auth
+function authenticateOrQRToken(req, res, next) {
+  // Check if QR token is provided in query params
+  const qrToken = req.query.qrToken || req.headers["x-qr-token"];
+
+  if (qrToken) {
+    try {
+      // Validate QR token
+      const tokenRecord = db
+        .prepare("SELECT * FROM qr_tokens WHERE token = ?")
+        .get(qrToken);
+
+      if (!tokenRecord) {
+        return res.status(404).json({
+          error: "Invalid QR token",
+          code: "INVALID_QR_TOKEN",
+        });
+      }
+
+      // Check if token expired
+      if (new Date(tokenRecord.expires_at) < new Date()) {
+        return res.status(403).json({
+          error: "QR token has expired",
+          code: "TOKEN_EXPIRED",
+        });
+      }
+
+      // Update access count
+      db.prepare(
+        `UPDATE qr_tokens 
+         SET access_count = access_count + 1, 
+             last_accessed_at = datetime('now')
+         WHERE token = ?`,
+      ).run(qrToken);
+
+      // Attach QR token info to request
+      req.qrAccess = {
+        deviceId: tokenRecord.device_id,
+        token: qrToken,
+      };
+
+      return next();
+    } catch (error) {
+      console.error("QR token validation error:", error);
+      return res.status(500).json({
+        error: "Token validation failed",
+        code: "SERVER_ERROR",
+      });
+    }
+  }
+
+  // Fall back to regular authentication
+  return authenticateToken(req, res, next);
+}
+
 // Get all PM logs
 router.get("/", authenticateToken, (req, res) => {
   const { deviceId, startDate, endDate, fullyFunctional } = req.query;
@@ -82,12 +137,22 @@ router.get("/", authenticateToken, (req, res) => {
   }
 });
 
-// Get PM logs by device (with history)
-router.get("/device/:deviceId", authenticateToken, (req, res) => {
+// Get PM logs by device (with history) - SUPPORTS QR TOKEN ACCESS
+router.get("/device/:deviceId", authenticateOrQRToken, (req, res) => {
   const { deviceId } = req.params;
   const { limit = 10 } = req.query;
 
   try {
+    // If QR access, verify the token matches the device
+    if (req.qrAccess) {
+      if (parseInt(req.qrAccess.deviceId) !== parseInt(deviceId)) {
+        return res.status(403).json({
+          error: "QR token is not valid for this device",
+          code: "DEVICE_MISMATCH",
+        });
+      }
+    }
+
     // Check if device exists
     const device = db
       .prepare("SELECT * FROM devices WHERE id = ?")
@@ -138,11 +203,14 @@ router.get("/device/:deviceId", authenticateToken, (req, res) => {
         deviceName: device.device_name,
         serialNumber: device.serial_number,
         manufacturer: device.manufacturer,
+        model: device.model,
+        location: device.location,
       },
       lastPMDate: lastPM ? lastPM.date : null,
       lastPMPerformedBy: lastPM ? lastPM.performed_by : null,
       logs: logsWithTasks,
       total: logs.length,
+      accessMode: req.qrAccess ? "qr" : "authenticated",
     });
   } catch (error) {
     console.error("Get device PM logs error:", error);
@@ -153,8 +221,8 @@ router.get("/device/:deviceId", authenticateToken, (req, res) => {
   }
 });
 
-// Get single PM log with tasks
-router.get("/:id", authenticateToken, (req, res) => {
+// Get single PM log with tasks - SUPPORTS QR TOKEN ACCESS
+router.get("/:id", authenticateOrQRToken, (req, res) => {
   const { id } = req.params;
 
   try {
@@ -165,6 +233,16 @@ router.get("/:id", authenticateToken, (req, res) => {
         error: "PM log not found",
         code: "PM_LOG_NOT_FOUND",
       });
+    }
+
+    // If QR access, verify the token matches the device
+    if (req.qrAccess) {
+      if (parseInt(req.qrAccess.deviceId) !== parseInt(log.device_id)) {
+        return res.status(403).json({
+          error: "QR token is not valid for this device",
+          code: "DEVICE_MISMATCH",
+        });
+      }
     }
 
     // Get all tasks for this log
@@ -198,6 +276,7 @@ router.get("/:id", authenticateToken, (req, res) => {
       tasks: tasks.map(formatPMLogTaskResponse),
       tasksByType,
       statistics: stats,
+      accessMode: req.qrAccess ? "qr" : "authenticated",
     });
   } catch (error) {
     console.error("Get PM log error:", error);
@@ -297,48 +376,39 @@ router.post("/", authenticateToken, (req, res) => {
         .all(deviceId);
 
       // Copy all tasks from checklists to pm_log_tasks
-      const insertTask = db.prepare(`
-        INSERT INTO pm_log_tasks (
-          pm_log_id, 
-          task_description, 
-          maintenance_type
-        )
-        VALUES (?, ?, ?)
-      `);
-
-      let taskCount = 0;
       for (const checklist of checklists) {
         const tasks = db
-          .prepare(`SELECT * FROM pm_tasks WHERE checklist_id = ?`)
+          .prepare("SELECT * FROM pm_tasks WHERE checklist_id = ?")
           .all(checklist.id);
 
         for (const task of tasks) {
-          insertTask.run(
-            logId,
-            task.task_description,
-            checklist.maintenance_type,
-          );
-          taskCount++;
+          db.prepare(
+            `INSERT INTO pm_log_tasks (pm_log_id, task_description, maintenance_type)
+             VALUES (?, ?, ?)`,
+          ).run(logId, task.task_description, checklist.maintenance_type);
         }
       }
 
-      return { logId, taskCount };
+      return logId;
     });
 
-    const { logId, taskCount } = transaction();
+    const logId = transaction();
 
-    // Get the newly created log
+    // Get the newly created log with tasks
     const newLog = db.prepare("SELECT * FROM pm_logs WHERE id = ?").get(logId);
+    const tasks = db
+      .prepare("SELECT * FROM pm_log_tasks WHERE pm_log_id = ?")
+      .all(logId);
 
     res.status(201).json({
       message: "PM log created successfully",
       log: formatPMLogResponse(newLog),
-      tasksCreated: taskCount,
+      tasks: tasks.map(formatPMLogTaskResponse),
     });
   } catch (error) {
     console.error("Create PM log error:", error);
     res.status(500).json({
-      error: error.message || "An error occurred while creating PM log",
+      error: "An error occurred while creating PM log",
       code: "SERVER_ERROR",
     });
   }
@@ -423,7 +493,7 @@ router.delete("/:id", authenticateToken, (req, res) => {
     if (!log) {
       return res.status(404).json({
         error: "PM log not found",
-        code: "PM_LOG_NOT_FOUND",
+        code: "DEVICE_NOT_FOUND",
       });
     }
 

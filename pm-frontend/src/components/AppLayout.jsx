@@ -1,4 +1,3 @@
-// components/AppLayout.js
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
@@ -27,6 +26,9 @@ export default function AppLayout({ children }) {
   const { user, logout, loading } = useAuth();
   const { theme, setTheme } = useTheme();
   const userMenuRef = useRef(null);
+
+  // Check if current page is public QR view
+  const isPublicView = pathname === "/pm-history";
 
   const menuItems = [
     {
@@ -91,6 +93,11 @@ export default function AppLayout({ children }) {
   const getPosition = () => {
     return user?.position || "No position";
   };
+
+  // If it's a public view, render without sidebar
+  if (isPublicView) {
+    return <div className="min-h-screen bg-background">{children}</div>;
+  }
 
   return (
     <div className="flex h-screen bg-background">
@@ -181,7 +188,7 @@ export default function AppLayout({ children }) {
                 <div className="relative w-8 h-8 flex-shrink-0">
                   {user?.profilePicture && user.profilePicture.trim() !== "" ? (
                     <Image
-                      src={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000"}/${user.profilePicture}`}
+                      src={`${process.env.NEXT_PUBLIC_API_URL || "http://172.16.21.12:4000"}/${user.profilePicture}`}
                       alt={getFullName()}
                       fill
                       className="rounded-lg object-cover"

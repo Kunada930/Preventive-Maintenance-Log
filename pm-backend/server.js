@@ -9,6 +9,7 @@ import devicesRoutes from "./routes/devices.js";
 import pmChecklistRoutes from "./routes/pm-checklist.js";
 import usersRoutes from "./routes/usersRoutes.js";
 import pmLogsRoutes from "./routes/pm-logs.js";
+import qrTokenRoutes from "./routes/qr-tokens.js";
 import { authenticateToken, isAdmin } from "./middleware/auth.js";
 
 dotenv.config();
@@ -23,7 +24,10 @@ const __dirname = path.dirname(__filename);
 //Middleware (Cookie Parser, CORS, JSON Parsing)
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: [
+      process.env.FRONTEND_URL || "http://localhost:3000",
+      "http://172.16.21.12:3000",
+    ],
     credentials: true, // Allow cookies to be sent
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -57,6 +61,9 @@ app.use("/api/pm-checklists", pmChecklistRoutes);
 // PM Logs routes
 app.use("/api/pm-logs", pmLogsRoutes);
 
+// QR Token routes
+app.use("/api/qr-tokens", qrTokenRoutes);
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -77,9 +84,9 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(
-    `Frontend URL: ${process.env.FRONTEND_URL || "http://localhost:3000"}`,
-  );
+  console.log(`Local: http://localhost:${PORT}`);
+  console.log(`Network: http://172.16.21.12:${PORT}`);
+  console.log(`Frontend URL: ${process.env.FRONTEND_URL}`);
 });

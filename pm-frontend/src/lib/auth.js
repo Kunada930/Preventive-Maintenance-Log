@@ -1,7 +1,7 @@
 // lib/auth.js
 
 const API_URL =
-  process.env.NEXT_PUBLIC_AUTH_URL || "http://localhost:4000/api/auth";
+  process.env.NEXT_PUBLIC_AUTH_URL || "http://172.16.21.12:4000/api/auth";
 
 class AuthService {
   constructor() {
@@ -144,6 +144,23 @@ class AuthService {
     return localStorage.getItem("token");
   }
 
+  // QR Token Management
+  getQRToken() {
+    return sessionStorage.getItem("qrAccessToken");
+  }
+
+  setQRToken(token) {
+    sessionStorage.setItem("qrAccessToken", token);
+  }
+
+  clearQRToken() {
+    sessionStorage.removeItem("qrAccessToken");
+  }
+
+  isQRAccess() {
+    return !!this.getQRToken();
+  }
+
   async logout() {
     const token = this.getToken();
 
@@ -165,15 +182,37 @@ class AuthService {
     // Clear local storage
     localStorage.removeItem("token");
     localStorage.removeItem("auth");
+
+    // Clear QR token if exists
+    this.clearQRToken();
   }
 
   isAuthenticated() {
     const token = this.getToken();
-    return !!token;
+    const qrToken = this.getQRToken();
+    return !!(token || qrToken);
   }
 
-  // Enhanced fetchWithAuth with automatic token refresh
+  // Enhanced fetchWithAuth with automatic token refresh AND QR token support
   async fetchWithAuth(url, options = {}) {
+    // Check for QR token first
+    const qrToken = this.getQRToken();
+
+    if (qrToken) {
+      // QR token access - add as query parameter
+      const separator = url.includes("?") ? "&" : "?";
+      const qrUrl = `${url}${separator}qrToken=${qrToken}`;
+
+      return fetch(qrUrl, {
+        ...options,
+        headers: {
+          ...options.headers,
+          "Content-Type": "application/json",
+        },
+      });
+    }
+
+    // Regular authenticated access
     const token = this.getToken();
 
     if (!token) {
