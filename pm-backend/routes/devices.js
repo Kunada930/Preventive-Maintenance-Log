@@ -20,7 +20,7 @@ function formatDeviceResponse(device) {
   };
 }
 
-// Get all devices
+// Get all devices (all authenticated users)
 router.get("/", authenticateToken, (req, res) => {
   try {
     const devices = db
@@ -40,7 +40,7 @@ router.get("/", authenticateToken, (req, res) => {
   }
 });
 
-// Get single device by ID
+// Get single device by ID (all authenticated users)
 router.get("/:id", authenticateToken, (req, res) => {
   const { id } = req.params;
 
@@ -61,6 +61,46 @@ router.get("/:id", authenticateToken, (req, res) => {
     console.error("Get device error:", error);
     res.status(500).json({
       error: "An error occurred while fetching device",
+      code: "SERVER_ERROR",
+    });
+  }
+});
+
+// Search devices (all authenticated users)
+router.get("/search/:query", authenticateToken, (req, res) => {
+  const { query } = req.params;
+
+  try {
+    const searchPattern = `%${query}%`;
+    const devices = db
+      .prepare(
+        `SELECT * FROM devices 
+         WHERE device_name LIKE ? 
+            OR serial_number LIKE ? 
+            OR manufacturer LIKE ? 
+            OR device_id LIKE ? 
+            OR responsible_person LIKE ? 
+            OR location LIKE ?
+         ORDER BY created_at DESC`,
+      )
+      .all(
+        searchPattern,
+        searchPattern,
+        searchPattern,
+        searchPattern,
+        searchPattern,
+        searchPattern,
+      );
+
+    res.json({
+      devices: devices.map(formatDeviceResponse),
+      total: devices.length,
+      query: query,
+    });
+  } catch (error) {
+    console.error("Search devices error:", error);
+    res.status(500).json({
+      error: "An error occurred while searching devices",
       code: "SERVER_ERROR",
     });
   }
@@ -286,46 +326,6 @@ router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
     console.error("Delete device error:", error);
     res.status(500).json({
       error: "An error occurred while deleting device",
-      code: "SERVER_ERROR",
-    });
-  }
-});
-
-// Search devices
-router.get("/search/:query", authenticateToken, (req, res) => {
-  const { query } = req.params;
-
-  try {
-    const searchPattern = `%${query}%`;
-    const devices = db
-      .prepare(
-        `SELECT * FROM devices 
-         WHERE device_name LIKE ? 
-            OR serial_number LIKE ? 
-            OR manufacturer LIKE ? 
-            OR device_id LIKE ? 
-            OR responsible_person LIKE ? 
-            OR location LIKE ?
-         ORDER BY created_at DESC`,
-      )
-      .all(
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        searchPattern,
-      );
-
-    res.json({
-      devices: devices.map(formatDeviceResponse),
-      total: devices.length,
-      query: query,
-    });
-  } catch (error) {
-    console.error("Search devices error:", error);
-    res.status(500).json({
-      error: "An error occurred while searching devices",
       code: "SERVER_ERROR",
     });
   }

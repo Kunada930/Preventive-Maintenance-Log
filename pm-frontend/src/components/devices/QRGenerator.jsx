@@ -12,12 +12,14 @@ import {
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { authService } from "@/lib/auth";
+import { useAuth } from "@/app/contexts/AuthContext";
 import QRCode from "qrcode";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://172.16.21.12:4000/api";
 
 export function QRGenerator({ deviceId, deviceName }) {
+  const { user: currentUser } = useAuth();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [qrData, setQrData] = useState(null);
@@ -25,7 +27,16 @@ export function QRGenerator({ deviceId, deviceName }) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(null);
 
+  // Check if current user is admin
+  const isAdmin = currentUser?.role === "admin";
+
   const generateQR = async () => {
+    // Only admins can generate QR codes
+    if (!isAdmin) {
+      setError("Only administrators can generate QR codes");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -154,6 +165,11 @@ export function QRGenerator({ deviceId, deviceName }) {
       setError("Failed to copy link to clipboard");
     }
   };
+
+  // Only show the QR Generator button to admins
+  if (!isAdmin) {
+    return null;
+  }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

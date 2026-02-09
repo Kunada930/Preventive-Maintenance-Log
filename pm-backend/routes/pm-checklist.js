@@ -46,7 +46,7 @@ function formatTaskResponse(task) {
   };
 }
 
-// Get all checklists
+// Get all checklists (all authenticated users can read)
 router.get("/", authenticateToken, (req, res) => {
   try {
     const checklists = db
@@ -65,7 +65,7 @@ router.get("/", authenticateToken, (req, res) => {
   }
 });
 
-// Get checklist by ID with tasks
+// Get checklist by ID with tasks (all authenticated users can read)
 router.get("/:id", authenticateToken, (req, res) => {
   const { id } = req.params;
 
@@ -100,8 +100,8 @@ router.get("/:id", authenticateToken, (req, res) => {
   }
 });
 
-// Create new checklist (ONE CHECKLIST WITH MULTIPLE MAINTENANCE TYPES)
-router.post("/", authenticateToken, (req, res) => {
+// Create new checklist (admin only)
+router.post("/", authenticateToken, isAdmin, (req, res) => {
   const { deviceId, maintenanceTypes, taskFrequency, tasks } = req.body;
 
   // Validate required fields
@@ -255,8 +255,8 @@ router.post("/", authenticateToken, (req, res) => {
   }
 });
 
-// Update checklist (basic info only)
-router.put("/:id", authenticateToken, (req, res) => {
+// Update checklist (admin only)
+router.put("/:id", authenticateToken, isAdmin, (req, res) => {
   const { id } = req.params;
   const { maintenanceTypes, taskFrequency } = req.body;
 
@@ -353,8 +353,8 @@ router.put("/:id", authenticateToken, (req, res) => {
   }
 });
 
-// Delete checklist
-router.delete("/:id", authenticateToken, (req, res) => {
+// Delete checklist (admin only)
+router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
   const { id } = req.params;
 
   try {
@@ -388,8 +388,8 @@ router.delete("/:id", authenticateToken, (req, res) => {
   }
 });
 
-// Create new task for a checklist
-router.post("/:id/tasks", authenticateToken, (req, res) => {
+// Create new task for a checklist (admin only)
+router.post("/:id/tasks", authenticateToken, isAdmin, (req, res) => {
   const { id } = req.params;
   const { taskDescription } = req.body;
 
@@ -442,7 +442,7 @@ router.post("/:id/tasks", authenticateToken, (req, res) => {
   }
 });
 
-// Update task completion status and notes
+// Update task completion status and notes (all authenticated users)
 router.put("/tasks/:taskId", authenticateToken, (req, res) => {
   const { taskId } = req.params;
   const { isCompleted, notes } = req.body;
@@ -495,57 +495,64 @@ router.put("/tasks/:taskId", authenticateToken, (req, res) => {
   }
 });
 
-// Update task description
-router.put("/tasks/:taskId/description", authenticateToken, (req, res) => {
-  const { taskId } = req.params;
-  const { taskDescription } = req.body;
+// Update task description (admin only)
+router.put(
+  "/tasks/:taskId/description",
+  authenticateToken,
+  isAdmin,
+  (req, res) => {
+    const { taskId } = req.params;
+    const { taskDescription } = req.body;
 
-  try {
-    const task = db.prepare("SELECT * FROM pm_tasks WHERE id = ?").get(taskId);
+    try {
+      const task = db
+        .prepare("SELECT * FROM pm_tasks WHERE id = ?")
+        .get(taskId);
 
-    if (!task) {
-      return res.status(404).json({
-        error: "Task not found",
-        code: "TASK_NOT_FOUND",
-      });
-    }
+      if (!task) {
+        return res.status(404).json({
+          error: "Task not found",
+          code: "TASK_NOT_FOUND",
+        });
+      }
 
-    // Validate task description
-    if (!taskDescription || taskDescription.trim() === "") {
-      return res.status(400).json({
-        error: "Task description is required",
-        code: "MISSING_TASK_DESCRIPTION",
-      });
-    }
+      // Validate task description
+      if (!taskDescription || taskDescription.trim() === "") {
+        return res.status(400).json({
+          error: "Task description is required",
+          code: "MISSING_TASK_DESCRIPTION",
+        });
+      }
 
-    db.prepare(
-      `
+      db.prepare(
+        `
       UPDATE pm_tasks 
       SET task_description = ?,
           updated_at = datetime('now')
       WHERE id = ?
     `,
-    ).run(taskDescription, taskId);
+      ).run(taskDescription, taskId);
 
-    const updatedTask = db
-      .prepare("SELECT * FROM pm_tasks WHERE id = ?")
-      .get(taskId);
+      const updatedTask = db
+        .prepare("SELECT * FROM pm_tasks WHERE id = ?")
+        .get(taskId);
 
-    res.json({
-      message: "Task description updated successfully",
-      task: formatTaskResponse(updatedTask),
-    });
-  } catch (error) {
-    console.error("Update task description error:", error);
-    res.status(500).json({
-      error: "An error occurred while updating task description",
-      code: "SERVER_ERROR",
-    });
-  }
-});
+      res.json({
+        message: "Task description updated successfully",
+        task: formatTaskResponse(updatedTask),
+      });
+    } catch (error) {
+      console.error("Update task description error:", error);
+      res.status(500).json({
+        error: "An error occurred while updating task description",
+        code: "SERVER_ERROR",
+      });
+    }
+  },
+);
 
-// Delete task
-router.delete("/tasks/:taskId", authenticateToken, (req, res) => {
+// Delete task (admin only)
+router.delete("/tasks/:taskId", authenticateToken, isAdmin, (req, res) => {
   const { taskId } = req.params;
 
   try {

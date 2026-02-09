@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { authService } from "@/lib/auth";
+import { useAuth } from "@/app/contexts/AuthContext";
 import {
   Card,
   CardContent,
@@ -36,6 +37,7 @@ import AlertDialogComponent from "@/components/AlertDialog";
 import { formatPhilippineDateTime } from "@/lib/dateUtils";
 
 const AccountManagement = () => {
+  const { user: currentUser } = useAuth(); // Get current logged-in user
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -51,6 +53,9 @@ const AccountManagement = () => {
     description: "",
     variant: "default",
   });
+
+  // Check if current user is admin
+  const isAdmin = currentUser?.role === "admin";
 
   const showAlert = (title, description, variant = "default") => {
     setAlertDialog({ open: true, title, description, variant });
@@ -119,6 +124,25 @@ const AccountManagement = () => {
   const getInitials = (firstName, lastName) => {
     return `${firstName?.charAt(0) || ""}${lastName?.charAt(0) || ""}`.toUpperCase();
   };
+
+  // If not admin, show access denied message
+  if (!isAdmin) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Access Denied</CardTitle>
+          <CardDescription>
+            You do not have permission to access this page.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground">
+            Only administrators can manage user accounts.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <>

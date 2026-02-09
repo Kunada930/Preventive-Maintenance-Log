@@ -1,6 +1,6 @@
 import express from "express";
 import db from "../database.js";
-import { authenticateToken } from "../middleware/auth.js";
+import { authenticateToken, isAdmin } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -483,8 +483,8 @@ router.put("/:id", authenticateToken, (req, res) => {
   }
 });
 
-// Delete PM log
-router.delete("/:id", authenticateToken, (req, res) => {
+// Delete PM log (admin only) - ADD isAdmin middleware
+router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
   const { id } = req.params;
 
   try {
@@ -626,8 +626,8 @@ router.post("/:id/tasks", authenticateToken, (req, res) => {
   }
 });
 
-// Delete a task from PM log
-router.delete("/tasks/:taskId", authenticateToken, (req, res) => {
+// Delete a task from PM log (admin only) - ADD isAdmin middleware
+router.delete("/tasks/:taskId", authenticateToken, isAdmin, (req, res) => {
   const { taskId } = req.params;
 
   try {

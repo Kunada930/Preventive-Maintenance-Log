@@ -4,7 +4,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import db from "../database.js";
-import { authenticateToken, isAdmin } from "../middleware/auth.js";
+import { isAdmin } from "../middleware/auth.js";
 import { formatUserResponse } from "../utils/userFormatter.js";
 import { addPasswordToHistory } from "../utils/passwordHistory.js";
 
@@ -49,8 +49,155 @@ const upload = multer({
   },
 });
 
+// ============================================
+// USER SELF-SERVICE ROUTES (accessed via /api/users/me/*)
+// These routes are protected by authenticateToken only
+// ============================================
+
+// Upload/Update own profile picture
+router.post(
+  "/me/profile-picture",
+  upload.single("profilePicture"),
+  (req, res) => {
+    try {
+      const id = req.user.id; // Use authenticated user's ID
+
+      if (!req.file) {
+        return res.status(400).json({
+          error: "No file uploaded",
+          code: "NO_FILE",
+        });
+      }
+
+      // Get existing user
+      const user = db
+        .prepare("SELECT profile_picture FROM users WHERE id = ?")
+        .get(id);
+
+      if (!user) {
+        // Delete uploaded file if user not found
+        fs.unlinkSync(req.file.path);
+        return res.status(404).json({
+          error: "User not found",
+          code: "USER_NOT_FOUND",
+        });
+      }
+
+      // Delete old profile picture if exists
+      if (user.profile_picture) {
+        const oldPath = `./${user.profile_picture}`;
+        if (fs.existsSync(oldPath)) {
+          fs.unlinkSync(oldPath);
+        }
+      }
+
+      // Update profile picture path in database
+      const profilePicturePath = `uploads/profiles/${req.file.filename}`;
+      db.prepare(
+        "UPDATE users SET profile_picture = ?, updated_at = datetime('now') WHERE id = ?",
+      ).run(profilePicturePath, id);
+
+      // Get updated user
+      const updatedUser = db
+        .prepare(
+          `
+        SELECT 
+          id, username, lastName, firstName, middleName, 
+          position, role, profile_picture, must_change_password, 
+          created_at, updated_at
+        FROM users
+        WHERE id = ?
+      `,
+        )
+        .get(id);
+
+      res.json({
+        message: "Profile picture updated successfully",
+        user: formatUserResponse(updatedUser),
+      });
+    } catch (error) {
+      // Delete uploaded file on error
+      if (req.file) {
+        fs.unlinkSync(req.file.path);
+      }
+      console.error("Upload profile picture error:", error);
+      res.status(500).json({
+        error: error.message || "Failed to upload profile picture",
+        code: "SERVER_ERROR",
+      });
+    }
+  },
+);
+
+// Delete own profile picture
+router.delete("/me/profile-picture", (req, res) => {
+  try {
+    const id = req.user.id; // Use authenticated user's ID
+
+    // Get existing user
+    const user = db
+      .prepare("SELECT profile_picture FROM users WHERE id = ?")
+      .get(id);
+
+    if (!user) {
+      return res.status(404).json({
+        error: "User not found",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    if (!user.profile_picture) {
+      return res.status(400).json({
+        error: "User has no profile picture",
+        code: "NO_PICTURE",
+      });
+    }
+
+    // Delete file from filesystem
+    const filePath = `./${user.profile_picture}`;
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+
+    // Remove profile picture path from database
+    db.prepare(
+      "UPDATE users SET profile_picture = NULL, updated_at = datetime('now') WHERE id = ?",
+    ).run(id);
+
+    // Get updated user
+    const updatedUser = db
+      .prepare(
+        `
+        SELECT 
+          id, username, lastName, firstName, middleName, 
+          position, role, profile_picture, must_change_password, 
+          created_at, updated_at
+        FROM users
+        WHERE id = ?
+      `,
+      )
+      .get(id);
+
+    res.json({
+      message: "Profile picture deleted successfully",
+      user: formatUserResponse(updatedUser),
+    });
+  } catch (error) {
+    console.error("Delete profile picture error:", error);
+    res.status(500).json({
+      error: "Failed to delete profile picture",
+      code: "SERVER_ERROR",
+    });
+  }
+});
+
+// ============================================
+// ADMIN-ONLY ROUTES (accessed via /api/users/*)
+// These routes are protected by authenticateToken + isAdmin
+// ============================================
+
 // Get all users (admin only)
-router.get("/", authenticateToken, isAdmin, (req, res) => {
+router.get("/", (req, res) => {
   try {
     const { page = 1, limit = 10, search = "", role = "" } = req.query;
     const offset = (page - 1) * limit;
@@ -114,7 +261,7 @@ router.get("/", authenticateToken, isAdmin, (req, res) => {
 });
 
 // Get single user by ID (admin only)
-router.get("/:id", authenticateToken, isAdmin, (req, res) => {
+router.get("/:id", (req, res) => {
   try {
     const { id } = req.params;
 
@@ -151,7 +298,7 @@ router.get("/:id", authenticateToken, isAdmin, (req, res) => {
 });
 
 // Create new user (admin only)
-router.post("/", authenticateToken, isAdmin, async (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const {
       username,
@@ -261,7 +408,7 @@ router.post("/", authenticateToken, isAdmin, async (req, res) => {
 });
 
 // Update user (admin only)
-router.put("/:id", authenticateToken, isAdmin, async (req, res) => {
+router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { firstName, middleName, lastName, position, role, password } =
@@ -370,26 +517,13 @@ router.put("/:id", authenticateToken, isAdmin, async (req, res) => {
   }
 });
 
-// Upload/Update profile picture
+// Upload/Update profile picture for any user (admin only)
 router.post(
   "/:id/profile-picture",
-  authenticateToken,
   upload.single("profilePicture"),
   (req, res) => {
     try {
       const { id } = req.params;
-
-      // Allow users to update their own profile picture or admin to update any
-      if (req.user.id !== parseInt(id) && req.user.role !== "admin") {
-        // Delete uploaded file if unauthorized
-        if (req.file) {
-          fs.unlinkSync(req.file.path);
-        }
-        return res.status(403).json({
-          error: "You can only update your own profile picture",
-          code: "FORBIDDEN",
-        });
-      }
 
       if (!req.file) {
         return res.status(400).json({
@@ -458,18 +592,10 @@ router.post(
   },
 );
 
-// Delete profile picture
-router.delete("/:id/profile-picture", authenticateToken, (req, res) => {
+// Delete profile picture for any user (admin only)
+router.delete("/:id/profile-picture", (req, res) => {
   try {
     const { id } = req.params;
-
-    // Allow users to delete their own profile picture or admin to delete any
-    if (req.user.id !== parseInt(id) && req.user.role !== "admin") {
-      return res.status(403).json({
-        error: "You can only delete your own profile picture",
-        code: "FORBIDDEN",
-      });
-    }
 
     // Get existing user
     const user = db
@@ -529,7 +655,7 @@ router.delete("/:id/profile-picture", authenticateToken, (req, res) => {
 });
 
 // Delete user (admin only)
-router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
+router.delete("/:id", (req, res) => {
   try {
     const { id } = req.params;
 
@@ -577,7 +703,7 @@ router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
 });
 
 // Get user statistics (admin only)
-router.get("/stats/overview", authenticateToken, isAdmin, (req, res) => {
+router.get("/stats/overview", (req, res) => {
   try {
     const stats = db
       .prepare(

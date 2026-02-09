@@ -36,6 +36,19 @@ export default function ProtectedRoute({ children }) {
       return;
     }
 
+    // RBAC: Admin-only routes
+    const adminOnlyRoutes = ["/settings"];
+    const isAdminRoute = adminOnlyRoutes.some((route) =>
+      pathname.startsWith(route),
+    );
+
+    // If non-admin user tries to access admin route, redirect
+    if (user && user.role !== "admin" && isAdminRoute) {
+      console.warn("Non-admin user attempted to access admin route");
+      router.push("/pm-logs"); // Redirect to default page
+      return;
+    }
+
     // If user exists and must change password
     if (user && user.mustChangePassword && pathname !== "/change-password") {
       router.push("/change-password");

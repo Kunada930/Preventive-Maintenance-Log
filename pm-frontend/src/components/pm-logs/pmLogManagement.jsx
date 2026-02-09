@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { authService } from "@/lib/auth";
+import { useAuth } from "@/app/contexts/AuthContext";
 import {
   Card,
   CardContent,
@@ -42,6 +43,7 @@ import AlertDialogComponent from "@/components/AlertDialog";
 import { formatPhilippineDate } from "@/lib/dateUtils";
 
 const PMLogManagement = () => {
+  const { user: currentUser } = useAuth(); // Get current logged-in user
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -65,6 +67,9 @@ const PMLogManagement = () => {
     description: "",
     variant: "default",
   });
+
+  // Check if current user is admin
+  const isAdmin = currentUser?.role === "admin";
 
   const showAlert = (title, description, variant = "default") => {
     setAlertDialog({ open: true, title, description, variant });
@@ -125,6 +130,14 @@ const PMLogManagement = () => {
   };
 
   const handleDelete = (log) => {
+    if (!isAdmin) {
+      showAlert(
+        "Access Denied",
+        "Only administrators can delete PM logs",
+        "destructive",
+      );
+      return;
+    }
     setSelectedLog(log);
     setDeleteDialogOpen(true);
   };
@@ -374,6 +387,7 @@ const PMLogManagement = () => {
                               variant="ghost"
                               size="icon"
                               onClick={() => handleView(log)}
+                              title="View PM log"
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
@@ -381,16 +395,20 @@ const PMLogManagement = () => {
                               variant="ghost"
                               size="icon"
                               onClick={() => handleEdit(log)}
+                              title="Edit PM log"
                             >
                               <Edit className="h-4 w-4" />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleDelete(log)}
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
+                            {isAdmin && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleDelete(log)}
+                                title="Delete PM log (Admin only)"
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -463,12 +481,14 @@ const PMLogManagement = () => {
         onSuccess={fetchLogs}
       />
 
-      <DeletePMLogDialog
-        open={deleteDialogOpen}
-        onOpenChange={setDeleteDialogOpen}
-        log={selectedLog}
-        onSuccess={fetchLogs}
-      />
+      {isAdmin && (
+        <DeletePMLogDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          log={selectedLog}
+          onSuccess={fetchLogs}
+        />
+      )}
 
       <AlertDialogComponent
         open={alertDialog.open}

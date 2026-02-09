@@ -30,21 +30,36 @@ export default function AppLayout({ children }) {
   // Check if current page is public QR view
   const isPublicView = pathname === "/pm-history";
 
-  const menuItems = [
+  // Define all menu items
+  const allMenuItems = [
     {
       id: "pm-logs",
       label: "PM Logs",
       icon: NotepadText,
       href: "/pm-logs",
+      roles: ["admin", "user"], // Both roles can access
     },
     {
       id: "pm-configuration",
       label: "PM Configuration",
       icon: MonitorCog,
       href: "/pm-configuration",
+      roles: ["admin", "user"], // Both roles can access
     },
-    { id: "settings", label: "Settings", icon: Settings, href: "/settings" },
+    {
+      id: "settings",
+      label: "Settings",
+      icon: Settings,
+      href: "/settings",
+      roles: ["admin"], // Admin only
+    },
   ];
+
+  // Filter menu items based on user role
+  const menuItems = allMenuItems.filter((item) => {
+    if (!user) return false;
+    return item.roles.includes(user.role);
+  });
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -129,7 +144,7 @@ export default function AppLayout({ children }) {
           </button>
         </div>
 
-        {/* Menu Items */}
+        {/* Menu Items - Filtered by role */}
         <nav className="flex-1 p-3 space-y-1">
           {menuItems.map((item) => {
             const Icon = item.icon;

@@ -49,7 +49,10 @@ app.get("/", (req, res) => {
 // Auth routes
 app.use("/api/auth", authRoutes);
 
-// Users routes (protected, admin only)
+// User self-service routes (MUST come before admin routes - more specific paths first)
+app.use("/api/users/me", authenticateToken, usersRoutes);
+
+// Admin-only user management routes
 app.use("/api/users", authenticateToken, isAdmin, usersRoutes);
 
 // Devices routes
