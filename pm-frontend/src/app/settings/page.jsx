@@ -1,9 +1,10 @@
 "use client";
-import React, { useState } from "react";
+import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Users } from "lucide-react";
+import { Users, ClipboardList } from "lucide-react";
 import PageBreadcrumb from "@/components/PageBreadcrumb";
 import AccountManagement from "@/components/settings/AccountManagement";
+import AuditTrail from "@/components/settings/AuditTrail";
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("accounts");
@@ -30,10 +31,18 @@ export default function SettingsPage() {
               <Users className="h-4 w-4" />
               Account Management
             </TabsTrigger>
+            <TabsTrigger value="audit" className="flex items-center gap-2">
+              <ClipboardList className="h-4 w-4" />
+              Audit Trail
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="accounts" className="space-y-4">
             <AccountManagement />
+          </TabsContent>
+
+          <TabsContent value="audit" className="space-y-4">
+            <AuditTrail />
           </TabsContent>
         </Tabs>
       </div>

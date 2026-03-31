@@ -2,10 +2,13 @@ import express from "express";
 import crypto from "crypto";
 import db from "../database.js";
 import { authenticateToken } from "../middleware/auth.js";
+import { logAudit } from "../middleware/audit.js";
 
 const router = express.Router();
 
-// Generate QR token for a device (authenticated users only)
+// ============================================
+// Generate QR token for a device
+// ============================================
 router.post("/generate", authenticateToken, (req, res) => {
   const { deviceId, expiresInHours = 24 } = req.body;
 
@@ -17,7 +20,6 @@ router.post("/generate", authenticateToken, (req, res) => {
   }
 
   try {
-    // Verify device exists
     const device = db
       .prepare("SELECT * FROM devices WHERE id = ?")
       .get(deviceId);
@@ -34,23 +36,36 @@ router.post("/generate", authenticateToken, (req, res) => {
       "DELETE FROM qr_tokens WHERE device_id = ? AND expires_at < datetime('now')",
     ).run(deviceId);
 
-    // Generate unique token
     const token = crypto.randomBytes(32).toString("hex");
 
-    // Calculate expiration
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + expiresInHours);
 
-    // Store token in database
     const result = db
       .prepare(
         `INSERT INTO qr_tokens (token, device_id, generated_by, expires_at)
-       VALUES (?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?)`,
       )
       .run(token, deviceId, req.user.id, expiresAt.toISOString());
 
-    // Generate QR code URL
     const qrUrl = `${process.env.FRONTEND_URL || "http://172.16.21.12:3000"}/pm-history?token=${token}`;
+
+    // Audit: who generated access for which device
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "CREATE",
+      entity: "qr_token",
+      entityId: result.lastInsertRowid,
+      oldValue: null,
+      newValue: {
+        deviceId,
+        deviceName: device.device_name,
+        expiresAt: expiresAt.toISOString(),
+        expiresInHours,
+      },
+      ip: req.ip,
+    });
 
     res.status(201).json({
       message: "QR token generated successfully",
@@ -70,7 +85,13 @@ router.post("/generate", authenticateToken, (req, res) => {
   }
 });
 
-// Validate QR token and get device info (public endpoint - no auth required)
+// ============================================
+// Validate QR token — called when QR code is scanned
+// (public endpoint, no auth required)
+// NOTE: access_count in qr_tokens already tracks scan frequency.
+// No audit log needed here — it would create excessive noise
+// for every public scan. The qr_tokens table handles this itself.
+// ============================================
 router.get("/validate/:token", (req, res) => {
   const { token } = req.params;
 
@@ -82,15 +103,14 @@ router.get("/validate/:token", (req, res) => {
   }
 
   try {
-    // Find token in database
     const tokenRecord = db
       .prepare(
         `SELECT qr.*, d.device_name, d.serial_number, d.manufacturer, d.location,
-              u.username as generated_by_username
-       FROM qr_tokens qr
-       JOIN devices d ON qr.device_id = d.id
-       LEFT JOIN users u ON qr.generated_by = u.id
-       WHERE qr.token = ?`,
+                u.username as generated_by_username
+         FROM qr_tokens qr
+         JOIN devices d ON qr.device_id = d.id
+         LEFT JOIN users u ON qr.generated_by = u.id
+         WHERE qr.token = ?`,
       )
       .get(token);
 
@@ -101,7 +121,6 @@ router.get("/validate/:token", (req, res) => {
       });
     }
 
-    // Check if token expired
     if (new Date(tokenRecord.expires_at) < new Date()) {
       return res.status(403).json({
         error: "QR token has expired",
@@ -109,15 +128,13 @@ router.get("/validate/:token", (req, res) => {
       });
     }
 
-    // Update access count and last accessed time
     db.prepare(
-      `UPDATE qr_tokens 
-       SET access_count = access_count + 1, 
+      `UPDATE qr_tokens
+       SET access_count = access_count + 1,
            last_accessed_at = datetime('now')
        WHERE token = ?`,
     ).run(token);
 
-    // Return device info
     res.json({
       valid: true,
       deviceId: tokenRecord.device_id,
@@ -137,7 +154,9 @@ router.get("/validate/:token", (req, res) => {
   }
 });
 
-// Revoke QR token (authenticated users only)
+// ============================================
+// Revoke QR token
+// ============================================
 router.delete("/revoke/:token", authenticateToken, (req, res) => {
   const { token } = req.params;
 
@@ -153,7 +172,7 @@ router.delete("/revoke/:token", authenticateToken, (req, res) => {
       });
     }
 
-    // Only allow the user who generated it or admin to revoke
+    // Only the generator or an admin can revoke
     if (tokenRecord.generated_by !== req.user.id && req.user.role !== "admin") {
       return res.status(403).json({
         error: "Access denied",
@@ -161,8 +180,24 @@ router.delete("/revoke/:token", authenticateToken, (req, res) => {
       });
     }
 
-    // Delete token
     db.prepare("DELETE FROM qr_tokens WHERE token = ?").run(token);
+
+    // Audit: who revoked access and for which device
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "DELETE",
+      entity: "qr_token",
+      entityId: tokenRecord.id,
+      oldValue: {
+        deviceId: tokenRecord.device_id,
+        expiresAt: tokenRecord.expires_at,
+        accessCount: tokenRecord.access_count,
+        generatedBy: tokenRecord.generated_by,
+      },
+      newValue: null,
+      ip: req.ip,
+    });
 
     res.json({
       message: "QR token revoked successfully",
@@ -176,7 +211,9 @@ router.delete("/revoke/:token", authenticateToken, (req, res) => {
   }
 });
 
-// Get all QR tokens for a device (authenticated users only)
+// ============================================
+// Get all QR tokens for a device (read-only, no audit)
+// ============================================
 router.get("/device/:deviceId", authenticateToken, (req, res) => {
   const { deviceId } = req.params;
 
@@ -184,10 +221,10 @@ router.get("/device/:deviceId", authenticateToken, (req, res) => {
     const tokens = db
       .prepare(
         `SELECT qr.*, u.username as generated_by_username
-       FROM qr_tokens qr
-       LEFT JOIN users u ON qr.generated_by = u.id
-       WHERE qr.device_id = ?
-       ORDER BY qr.created_at DESC`,
+         FROM qr_tokens qr
+         LEFT JOIN users u ON qr.generated_by = u.id
+         WHERE qr.device_id = ?
+         ORDER BY qr.created_at DESC`,
       )
       .all(deviceId);
 
@@ -204,12 +241,26 @@ router.get("/device/:deviceId", authenticateToken, (req, res) => {
   }
 });
 
-// Clean up expired tokens (can be called by a cron job or manually)
+// ============================================
+// Cleanup expired tokens
+// ============================================
 router.post("/cleanup", authenticateToken, (req, res) => {
   try {
     const result = db
       .prepare("DELETE FROM qr_tokens WHERE expires_at < datetime('now')")
       .run();
+
+    // Audit: maintenance action worth recording
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "DELETE",
+      entity: "qr_token_cleanup",
+      entityId: null,
+      oldValue: null,
+      newValue: { deletedCount: result.changes },
+      ip: req.ip,
+    });
 
     res.json({
       message: "Expired tokens cleaned up successfully",

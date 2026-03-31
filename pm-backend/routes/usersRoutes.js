@@ -4,17 +4,19 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import db from "../database.js";
-import { authenticateToken, isAdmin } from "../middleware/auth.js";
+import { isAdmin } from "../middleware/auth.js";
 import { formatUserResponse } from "../utils/userFormatter.js";
 import { addPasswordToHistory } from "../utils/passwordHistory.js";
+import { logAudit, auditMiddleware } from "../middleware/audit.js";
 
 const router = express.Router();
 
-// Configure multer for profile picture uploads
+// ============================================
+// Multer configuration for profile pictures
+// ============================================
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = "./uploads/profiles";
-    // Create directory if it doesn't exist
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
@@ -31,9 +33,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-  },
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif/;
     const extname = allowedTypes.test(
@@ -49,13 +49,156 @@ const upload = multer({
   },
 });
 
-// Get all users (admin only)
-router.get("/", authenticateToken, isAdmin, (req, res) => {
+// ============================================
+// USER SELF-SERVICE ROUTES (/api/users/me/*)
+// ============================================
+
+// Upload own profile picture
+router.post(
+  "/me/profile-picture",
+  upload.single("profilePicture"),
+  (req, res) => {
+    try {
+      const id = req.user.id;
+
+      if (!req.file) {
+        return res.status(400).json({
+          error: "No file uploaded",
+          code: "NO_FILE",
+        });
+      }
+
+      const user = db
+        .prepare("SELECT profile_picture FROM users WHERE id = ?")
+        .get(id);
+
+      if (!user) {
+        fs.unlinkSync(req.file.path);
+        return res.status(404).json({
+          error: "User not found",
+          code: "USER_NOT_FOUND",
+        });
+      }
+
+      // Delete old profile picture if exists
+      if (user.profile_picture) {
+        const oldPath = `./${user.profile_picture}`;
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      }
+
+      const profilePicturePath = `uploads/profiles/${req.file.filename}`;
+      db.prepare(
+        "UPDATE users SET profile_picture = ?, updated_at = datetime('now') WHERE id = ?",
+      ).run(profilePicturePath, id);
+
+      const updatedUser = db
+        .prepare(
+          `SELECT id, username, lastName, firstName, middleName,
+            position, role, profile_picture, must_change_password,
+            created_at, updated_at FROM users WHERE id = ?`,
+        )
+        .get(id);
+
+      // ✅ Audit profile picture update
+      logAudit({
+        userId: req.user.id,
+        username: req.user.username,
+        action: "UPDATE",
+        entity: "user_profile_picture",
+        entityId: id,
+        oldValue: { profilePicture: user.profile_picture },
+        newValue: { profilePicture: profilePicturePath },
+        ip: req.ip,
+      });
+
+      res.json({
+        message: "Profile picture updated successfully",
+        user: formatUserResponse(updatedUser),
+      });
+    } catch (error) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      console.error("Upload profile picture error:", error);
+      res.status(500).json({
+        error: error.message || "Failed to upload profile picture",
+        code: "SERVER_ERROR",
+      });
+    }
+  },
+);
+
+// Delete own profile picture
+router.delete("/me/profile-picture", (req, res) => {
+  try {
+    const id = req.user.id;
+
+    const user = db
+      .prepare("SELECT profile_picture FROM users WHERE id = ?")
+      .get(id);
+
+    if (!user) {
+      return res.status(404).json({
+        error: "User not found",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    if (!user.profile_picture) {
+      return res.status(400).json({
+        error: "User has no profile picture",
+        code: "NO_PICTURE",
+      });
+    }
+
+    const filePath = `./${user.profile_picture}`;
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    db.prepare(
+      "UPDATE users SET profile_picture = NULL, updated_at = datetime('now') WHERE id = ?",
+    ).run(id);
+
+    const updatedUser = db
+      .prepare(
+        `SELECT id, username, lastName, firstName, middleName,
+          position, role, profile_picture, must_change_password,
+          created_at, updated_at FROM users WHERE id = ?`,
+      )
+      .get(id);
+
+    // ✅ Audit profile picture deletion
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "DELETE",
+      entity: "user_profile_picture",
+      entityId: id,
+      oldValue: { profilePicture: user.profile_picture },
+      newValue: null,
+      ip: req.ip,
+    });
+
+    res.json({
+      message: "Profile picture deleted successfully",
+      user: formatUserResponse(updatedUser),
+    });
+  } catch (error) {
+    console.error("Delete profile picture error:", error);
+    res.status(500).json({
+      error: "Failed to delete profile picture",
+      code: "SERVER_ERROR",
+    });
+  }
+});
+
+// ============================================
+// ADMIN-ONLY ROUTES (/api/users/*)
+// ============================================
+
+// Get all users
+router.get("/", (req, res) => {
   try {
     const { page = 1, limit = 10, search = "", role = "" } = req.query;
     const offset = (page - 1) * limit;
 
-    // Build WHERE clause
     let whereConditions = [];
     let params = [];
 
@@ -77,23 +220,19 @@ router.get("/", authenticateToken, isAdmin, (req, res) => {
         ? `WHERE ${whereConditions.join(" AND ")}`
         : "";
 
-    // Get total count
     const countQuery = `SELECT COUNT(*) as total FROM users ${whereClause}`;
     const { total } = db.prepare(countQuery).get(...params);
 
-    // Get paginated users
-    const usersQuery = `
-      SELECT 
-        id, username, lastName, firstName, middleName, 
-        position, role, profile_picture, must_change_password, 
-        created_at, updated_at
-      FROM users
-      ${whereClause}
-      ORDER BY created_at DESC
-      LIMIT ? OFFSET ?
-    `;
-
-    const users = db.prepare(usersQuery).all(...params, limit, offset);
+    const users = db
+      .prepare(
+        `SELECT id, username, lastName, firstName, middleName,
+          position, role, profile_picture, must_change_password,
+          created_at, updated_at
+         FROM users ${whereClause}
+         ORDER BY created_at DESC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(...params, limit, offset);
 
     res.json({
       users: users.map(formatUserResponse),
@@ -113,21 +252,16 @@ router.get("/", authenticateToken, isAdmin, (req, res) => {
   }
 });
 
-// Get single user by ID (admin only)
-router.get("/:id", authenticateToken, isAdmin, (req, res) => {
+// Get single user by ID
+router.get("/:id", (req, res) => {
   try {
     const { id } = req.params;
 
     const user = db
       .prepare(
-        `
-      SELECT 
-        id, username, lastName, firstName, middleName, 
-        position, role, profile_picture, must_change_password, 
-        created_at, updated_at
-      FROM users
-      WHERE id = ?
-    `,
+        `SELECT id, username, lastName, firstName, middleName,
+          position, role, profile_picture, must_change_password,
+          created_at, updated_at FROM users WHERE id = ?`,
       )
       .get(id);
 
@@ -138,9 +272,7 @@ router.get("/:id", authenticateToken, isAdmin, (req, res) => {
       });
     }
 
-    res.json({
-      user: formatUserResponse(user),
-    });
+    res.json({ user: formatUserResponse(user) });
   } catch (error) {
     console.error("Get user error:", error);
     res.status(500).json({
@@ -151,7 +283,7 @@ router.get("/:id", authenticateToken, isAdmin, (req, res) => {
 });
 
 // Create new user (admin only)
-router.post("/", authenticateToken, isAdmin, async (req, res) => {
+router.post("/", async (req, res) => {
   try {
     const {
       username,
@@ -163,7 +295,6 @@ router.post("/", authenticateToken, isAdmin, async (req, res) => {
       role = "user",
     } = req.body;
 
-    // Validation
     if (
       !username ||
       !password ||
@@ -178,7 +309,6 @@ router.post("/", authenticateToken, isAdmin, async (req, res) => {
       });
     }
 
-    // Validate password strength
     if (password.length < 8) {
       return res.status(400).json({
         error: "Password must be at least 8 characters long",
@@ -186,7 +316,6 @@ router.post("/", authenticateToken, isAdmin, async (req, res) => {
       });
     }
 
-    // Validate role
     if (!["admin", "user"].includes(role)) {
       return res.status(400).json({
         error: "Invalid role. Must be 'admin' or 'user'",
@@ -194,7 +323,6 @@ router.post("/", authenticateToken, isAdmin, async (req, res) => {
       });
     }
 
-    // Check if username already exists
     const existingUser = db
       .prepare("SELECT id FROM users WHERE username = ?")
       .get(username);
@@ -206,19 +334,14 @@ router.post("/", authenticateToken, isAdmin, async (req, res) => {
       });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insert new user
     const result = db
       .prepare(
-        `
-      INSERT INTO users (
-        username, password, firstName, middleName, lastName, 
-        position, role, must_change_password
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-    `,
+        `INSERT INTO users (
+          username, password, firstName, middleName, lastName,
+          position, role, must_change_password
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
       )
       .run(
         username,
@@ -230,22 +353,27 @@ router.post("/", authenticateToken, isAdmin, async (req, res) => {
         role,
       );
 
-    // Add password to history
     addPasswordToHistory(result.lastInsertRowid, hashedPassword);
 
-    // Get created user
     const newUser = db
       .prepare(
-        `
-      SELECT 
-        id, username, lastName, firstName, middleName, 
-        position, role, profile_picture, must_change_password, 
-        created_at, updated_at
-      FROM users
-      WHERE id = ?
-    `,
+        `SELECT id, username, lastName, firstName, middleName,
+          position, role, profile_picture, must_change_password,
+          created_at, updated_at FROM users WHERE id = ?`,
       )
       .get(result.lastInsertRowid);
+
+    // ✅ Audit user creation
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "CREATE",
+      entity: "user",
+      entityId: newUser.id,
+      oldValue: null,
+      newValue: formatUserResponse(newUser), // formatUserResponse strips the password
+      ip: req.ip,
+    });
 
     res.status(201).json({
       message: "User created successfully",
@@ -261,13 +389,12 @@ router.post("/", authenticateToken, isAdmin, async (req, res) => {
 });
 
 // Update user (admin only)
-router.put("/:id", authenticateToken, isAdmin, async (req, res) => {
+router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { firstName, middleName, lastName, position, role, password } =
       req.body;
 
-    // Check if user exists
     const existingUser = db.prepare("SELECT * FROM users WHERE id = ?").get(id);
 
     if (!existingUser) {
@@ -277,7 +404,6 @@ router.put("/:id", authenticateToken, isAdmin, async (req, res) => {
       });
     }
 
-    // Validate role if provided
     if (role && !["admin", "user"].includes(role)) {
       return res.status(400).json({
         error: "Invalid role. Must be 'admin' or 'user'",
@@ -285,7 +411,6 @@ router.put("/:id", authenticateToken, isAdmin, async (req, res) => {
       });
     }
 
-    // Build update query dynamically
     const updates = [];
     const params = [];
 
@@ -310,7 +435,6 @@ router.put("/:id", authenticateToken, isAdmin, async (req, res) => {
       params.push(role);
     }
 
-    // Handle password update
     if (password) {
       if (password.length < 8) {
         return res.status(400).json({
@@ -318,13 +442,12 @@ router.put("/:id", authenticateToken, isAdmin, async (req, res) => {
           code: "WEAK_PASSWORD",
         });
       }
-
       const hashedPassword = await bcrypt.hash(password, 10);
       updates.push("password = ?");
       updates.push("must_change_password = 1");
       params.push(hashedPassword);
 
-      // Add old password to history
+      // Save old password to history before overwriting
       addPasswordToHistory(id, existingUser.password);
     }
 
@@ -338,24 +461,29 @@ router.put("/:id", authenticateToken, isAdmin, async (req, res) => {
     updates.push("updated_at = datetime('now')");
     params.push(id);
 
-    // Update user
     db.prepare(`UPDATE users SET ${updates.join(", ")} WHERE id = ?`).run(
       ...params,
     );
 
-    // Get updated user
     const updatedUser = db
       .prepare(
-        `
-      SELECT 
-        id, username, lastName, firstName, middleName, 
-        position, role, profile_picture, must_change_password, 
-        created_at, updated_at
-      FROM users
-      WHERE id = ?
-    `,
+        `SELECT id, username, lastName, firstName, middleName,
+          position, role, profile_picture, must_change_password,
+          created_at, updated_at FROM users WHERE id = ?`,
       )
       .get(id);
+
+    // ✅ Audit with before/after snapshot (no passwords included)
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "UPDATE",
+      entity: "user",
+      entityId: parseInt(id),
+      oldValue: formatUserResponse(existingUser),
+      newValue: formatUserResponse(updatedUser),
+      ip: req.ip,
+    });
 
     res.json({
       message: "User updated successfully",
@@ -370,26 +498,13 @@ router.put("/:id", authenticateToken, isAdmin, async (req, res) => {
   }
 });
 
-// Upload/Update profile picture
+// Upload profile picture for any user (admin only)
 router.post(
   "/:id/profile-picture",
-  authenticateToken,
   upload.single("profilePicture"),
   (req, res) => {
     try {
       const { id } = req.params;
-
-      // Allow users to update their own profile picture or admin to update any
-      if (req.user.id !== parseInt(id) && req.user.role !== "admin") {
-        // Delete uploaded file if unauthorized
-        if (req.file) {
-          fs.unlinkSync(req.file.path);
-        }
-        return res.status(403).json({
-          error: "You can only update your own profile picture",
-          code: "FORBIDDEN",
-        });
-      }
 
       if (!req.file) {
         return res.status(400).json({
@@ -398,13 +513,11 @@ router.post(
         });
       }
 
-      // Get existing user
       const user = db
         .prepare("SELECT profile_picture FROM users WHERE id = ?")
         .get(id);
 
       if (!user) {
-        // Delete uploaded file if user not found
         fs.unlinkSync(req.file.path);
         return res.status(404).json({
           error: "User not found",
@@ -412,43 +525,42 @@ router.post(
         });
       }
 
-      // Delete old profile picture if exists
       if (user.profile_picture) {
         const oldPath = `./${user.profile_picture}`;
-        if (fs.existsSync(oldPath)) {
-          fs.unlinkSync(oldPath);
-        }
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
       }
 
-      // Update profile picture path in database
       const profilePicturePath = `uploads/profiles/${req.file.filename}`;
       db.prepare(
         "UPDATE users SET profile_picture = ?, updated_at = datetime('now') WHERE id = ?",
       ).run(profilePicturePath, id);
 
-      // Get updated user
       const updatedUser = db
         .prepare(
-          `
-        SELECT 
-          id, username, lastName, firstName, middleName, 
-          position, role, profile_picture, must_change_password, 
-          created_at, updated_at
-        FROM users
-        WHERE id = ?
-      `,
+          `SELECT id, username, lastName, firstName, middleName,
+            position, role, profile_picture, must_change_password,
+            created_at, updated_at FROM users WHERE id = ?`,
         )
         .get(id);
+
+      // ✅ Audit admin profile picture update
+      logAudit({
+        userId: req.user.id,
+        username: req.user.username,
+        action: "UPDATE",
+        entity: "user_profile_picture",
+        entityId: parseInt(id),
+        oldValue: { profilePicture: user.profile_picture },
+        newValue: { profilePicture: profilePicturePath },
+        ip: req.ip,
+      });
 
       res.json({
         message: "Profile picture updated successfully",
         user: formatUserResponse(updatedUser),
       });
     } catch (error) {
-      // Delete uploaded file on error
-      if (req.file) {
-        fs.unlinkSync(req.file.path);
-      }
+      if (req.file) fs.unlinkSync(req.file.path);
       console.error("Upload profile picture error:", error);
       res.status(500).json({
         error: error.message || "Failed to upload profile picture",
@@ -458,20 +570,11 @@ router.post(
   },
 );
 
-// Delete profile picture
-router.delete("/:id/profile-picture", authenticateToken, (req, res) => {
+// Delete profile picture for any user (admin only)
+router.delete("/:id/profile-picture", (req, res) => {
   try {
     const { id } = req.params;
 
-    // Allow users to delete their own profile picture or admin to delete any
-    if (req.user.id !== parseInt(id) && req.user.role !== "admin") {
-      return res.status(403).json({
-        error: "You can only delete your own profile picture",
-        code: "FORBIDDEN",
-      });
-    }
-
-    // Get existing user
     const user = db
       .prepare("SELECT profile_picture FROM users WHERE id = ?")
       .get(id);
@@ -490,30 +593,32 @@ router.delete("/:id/profile-picture", authenticateToken, (req, res) => {
       });
     }
 
-    // Delete file from filesystem
     const filePath = `./${user.profile_picture}`;
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-    // Remove profile picture path from database
     db.prepare(
       "UPDATE users SET profile_picture = NULL, updated_at = datetime('now') WHERE id = ?",
     ).run(id);
 
-    // Get updated user
     const updatedUser = db
       .prepare(
-        `
-        SELECT 
-          id, username, lastName, firstName, middleName, 
-          position, role, profile_picture, must_change_password, 
-          created_at, updated_at
-        FROM users
-        WHERE id = ?
-      `,
+        `SELECT id, username, lastName, firstName, middleName,
+          position, role, profile_picture, must_change_password,
+          created_at, updated_at FROM users WHERE id = ?`,
       )
       .get(id);
+
+    // ✅ Audit admin profile picture deletion
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "DELETE",
+      entity: "user_profile_picture",
+      entityId: parseInt(id),
+      oldValue: { profilePicture: user.profile_picture },
+      newValue: null,
+      ip: req.ip,
+    });
 
     res.json({
       message: "Profile picture deleted successfully",
@@ -529,11 +634,10 @@ router.delete("/:id/profile-picture", authenticateToken, (req, res) => {
 });
 
 // Delete user (admin only)
-router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
+router.delete("/:id", (req, res) => {
   try {
     const { id } = req.params;
 
-    // Prevent admin from deleting themselves
     if (req.user.id === parseInt(id)) {
       return res.status(400).json({
         error: "You cannot delete your own account",
@@ -541,9 +645,12 @@ router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
       });
     }
 
-    // Check if user exists
     const user = db
-      .prepare("SELECT profile_picture FROM users WHERE id = ?")
+      .prepare(
+        `SELECT id, username, lastName, firstName, middleName,
+          position, role, profile_picture, must_change_password,
+          created_at, updated_at FROM users WHERE id = ?`,
+      )
       .get(id);
 
     if (!user) {
@@ -553,20 +660,26 @@ router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
       });
     }
 
-    // Delete profile picture if exists
     if (user.profile_picture) {
       const filePath = `./${user.profile_picture}`;
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     }
 
-    // Delete user (cascade will delete password history and refresh tokens)
     db.prepare("DELETE FROM users WHERE id = ?").run(id);
 
-    res.json({
-      message: "User deleted successfully",
+    // ✅ Audit user deletion (capture full record before it's gone)
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "DELETE",
+      entity: "user",
+      entityId: parseInt(id),
+      oldValue: formatUserResponse(user),
+      newValue: null,
+      ip: req.ip,
     });
+
+    res.json({ message: "User deleted successfully" });
   } catch (error) {
     console.error("Delete user error:", error);
     res.status(500).json({
@@ -577,25 +690,21 @@ router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
 });
 
 // Get user statistics (admin only)
-router.get("/stats/overview", authenticateToken, isAdmin, (req, res) => {
+router.get("/stats/overview", (req, res) => {
   try {
     const stats = db
       .prepare(
-        `
-      SELECT 
-        COUNT(*) as total_users,
-        SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as admin_count,
-        SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) as user_count,
-        SUM(CASE WHEN must_change_password = 1 THEN 1 ELSE 0 END) as pending_password_change,
-        SUM(CASE WHEN profile_picture IS NOT NULL THEN 1 ELSE 0 END) as users_with_picture
-      FROM users
-    `,
+        `SELECT
+          COUNT(*) as total_users,
+          SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as admin_count,
+          SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) as user_count,
+          SUM(CASE WHEN must_change_password = 1 THEN 1 ELSE 0 END) as pending_password_change,
+          SUM(CASE WHEN profile_picture IS NOT NULL THEN 1 ELSE 0 END) as users_with_picture
+         FROM users`,
       )
       .get();
 
-    res.json({
-      statistics: stats,
-    });
+    res.json({ statistics: stats });
   } catch (error) {
     console.error("Get user stats error:", error);
     res.status(500).json({

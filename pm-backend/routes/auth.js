@@ -9,6 +9,7 @@ import {
   addPasswordToHistory,
 } from "../utils/passwordHistory.js";
 import { formatUserResponse } from "../utils/userFormatter.js";
+import { logAudit } from "../middleware/audit.js";
 
 const router = express.Router();
 
@@ -59,7 +60,6 @@ router.post("/login", async (req, res) => {
   }
 
   try {
-    // Find user by username
     const user = db
       .prepare(
         "SELECT id, username, password, lastName, firstName, middleName, position, role, profile_picture, must_change_password FROM users WHERE username = ?",
@@ -73,7 +73,6 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // Verify password
     const isValidPassword = await bcrypt.compare(password, user.password);
 
     if (!isValidPassword) {
@@ -83,23 +82,31 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // Generate tokens
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();
 
-    // Clean up old tokens and store new refresh token
     cleanExpiredTokens();
     storeRefreshToken(user.id, refreshToken);
 
-    // Set refresh token as httpOnly cookie
+    // Audit login
+    logAudit({
+      userId: user.id,
+      username: user.username,
+      action: "LOGIN",
+      entity: "auth",
+      entityId: user.id,
+      oldValue: null,
+      newValue: null,
+      ip: req.ip,
+    });
+
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    // Return user info and access token with camelCase formatting
     res.json({
       message: "Login successful",
       token: accessToken,
@@ -126,10 +133,8 @@ router.post("/refresh", (req, res) => {
   }
 
   try {
-    // Clean expired tokens first
     cleanExpiredTokens();
 
-    // Find refresh token in database
     const tokenRecord = db
       .prepare("SELECT user_id, expires_at FROM refresh_tokens WHERE token = ?")
       .get(refreshToken);
@@ -141,9 +146,7 @@ router.post("/refresh", (req, res) => {
       });
     }
 
-    // Check if token expired
     if (new Date(tokenRecord.expires_at) < new Date()) {
-      // Delete expired token
       db.prepare("DELETE FROM refresh_tokens WHERE token = ?").run(
         refreshToken,
       );
@@ -154,7 +157,6 @@ router.post("/refresh", (req, res) => {
       });
     }
 
-    // Get user data
     const user = db
       .prepare("SELECT id, username, role FROM users WHERE id = ?")
       .get(tokenRecord.user_id);
@@ -166,7 +168,6 @@ router.post("/refresh", (req, res) => {
       });
     }
 
-    // Generate new access token
     const accessToken = generateAccessToken(user);
 
     res.json({
@@ -223,7 +224,6 @@ router.post("/change-password", authenticateToken, async (req, res) => {
     });
   }
 
-  // Validate new password strength
   if (newPassword.length < 8) {
     return res.status(400).json({
       error: "New password must be at least 8 characters long",
@@ -232,7 +232,6 @@ router.post("/change-password", authenticateToken, async (req, res) => {
   }
 
   try {
-    // Get current user data
     const user = db
       .prepare("SELECT password, username, role FROM users WHERE id = ?")
       .get(userId);
@@ -244,7 +243,6 @@ router.post("/change-password", authenticateToken, async (req, res) => {
       });
     }
 
-    // Verify current password
     const isValidPassword = await bcrypt.compare(
       currentPassword,
       user.password,
@@ -257,7 +255,6 @@ router.post("/change-password", authenticateToken, async (req, res) => {
       });
     }
 
-    // Check password history
     const passwordReused = await isPasswordReused(userId, newPassword);
 
     if (passwordReused) {
@@ -267,29 +264,36 @@ router.post("/change-password", authenticateToken, async (req, res) => {
       });
     }
 
-    // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // Update password and set must_change_password to 0
     db.prepare(
       "UPDATE users SET password = ?, must_change_password = 0, updated_at = datetime('now') WHERE id = ?",
     ).run(hashedPassword, userId);
 
-    // Add old password to password history
     addPasswordToHistory(userId, user.password);
 
-    // Get updated user data
     const updatedUser = db
       .prepare(
         "SELECT id, username, lastName, firstName, middleName, position, role, profile_picture, must_change_password FROM users WHERE id = ?",
       )
       .get(userId);
 
-    // Generate new access token
     const accessToken = generateAccessToken({
       id: userId,
       username: user.username,
       role: user.role,
+    });
+
+    // Audit password change
+    logAudit({
+      userId: userId,
+      username: user.username,
+      action: "UPDATE",
+      entity: "auth",
+      entityId: userId,
+      oldValue: null, // never log password hashes
+      newValue: null,
+      ip: req.ip,
     });
 
     res.json({
@@ -339,11 +343,21 @@ router.post("/logout", authenticateToken, (req, res) => {
   const refreshToken = req.cookies.refreshToken;
 
   if (refreshToken) {
-    // Remove refresh token from database
     db.prepare("DELETE FROM refresh_tokens WHERE token = ?").run(refreshToken);
   }
 
-  // Clear refresh token cookie
+  // Audit logout
+  logAudit({
+    userId: req.user.id,
+    username: req.user.username,
+    action: "LOGOUT",
+    entity: "auth",
+    entityId: req.user.id,
+    oldValue: null,
+    newValue: null,
+    ip: req.ip,
+  });
+
   res.clearCookie("refreshToken");
 
   res.json({

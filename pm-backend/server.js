@@ -10,6 +10,7 @@ import pmChecklistRoutes from "./routes/pm-checklist.js";
 import usersRoutes from "./routes/usersRoutes.js";
 import pmLogsRoutes from "./routes/pm-logs.js";
 import qrTokenRoutes from "./routes/qr-tokens.js";
+import auditRoutes from "./routes/audit.js";
 import { authenticateToken, isAdmin } from "./middleware/auth.js";
 
 dotenv.config();
@@ -49,7 +50,10 @@ app.get("/", (req, res) => {
 // Auth routes
 app.use("/api/auth", authRoutes);
 
-// Users routes (protected, admin only)
+// User self-service routes (MUST come before admin routes - more specific paths first)
+app.use("/api/users/me", authenticateToken, usersRoutes);
+
+// Admin-only user management routes
 app.use("/api/users", authenticateToken, isAdmin, usersRoutes);
 
 // Devices routes
@@ -63,6 +67,9 @@ app.use("/api/pm-logs", pmLogsRoutes);
 
 // QR Token routes
 app.use("/api/qr-tokens", qrTokenRoutes);
+
+// Audit log routes (admin only)
+app.use("/api/audit", auditRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

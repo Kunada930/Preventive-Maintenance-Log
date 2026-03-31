@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { authService } from "@/lib/auth";
+import { useAuth } from "@/app/contexts/AuthContext";
 import {
   Card,
   CardContent,
@@ -28,6 +29,7 @@ import AlertDialogComponent from "@/components/AlertDialog";
 import { formatPhilippineDate } from "@/lib/dateUtils";
 
 const DeviceManagement = () => {
+  const { user: currentUser } = useAuth(); // Get current logged-in user
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -44,6 +46,9 @@ const DeviceManagement = () => {
     description: "",
     variant: "default",
   });
+
+  // Check if current user is admin
+  const isAdmin = currentUser?.role === "admin";
 
   const showAlert = (title, description, variant = "default") => {
     setAlertDialog({ open: true, title, description, variant });
@@ -86,6 +91,7 @@ const DeviceManagement = () => {
   };
 
   const handleEdit = (device) => {
+    // Users and admins can edit
     setSelectedDevice(device);
     setEditDialogOpen(true);
   };
@@ -96,6 +102,15 @@ const DeviceManagement = () => {
   };
 
   const handleDelete = (device) => {
+    // Only admins can delete
+    if (!isAdmin) {
+      showAlert(
+        "Access Denied",
+        "Only administrators can delete devices",
+        "destructive",
+      );
+      return;
+    }
     setSelectedDevice(device);
     setDeleteDialogOpen(true);
   };
@@ -138,6 +153,7 @@ const DeviceManagement = () => {
                 Manage devices, track equipment, and monitor assignments
               </CardDescription>
             </div>
+            {/* Users and admins can create devices */}
             <Button onClick={() => setCreateDialogOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               Add Device
@@ -168,7 +184,6 @@ const DeviceManagement = () => {
                   <TableRow>
                     <TableHead>Device Name</TableHead>
                     <TableHead>Serial Number</TableHead>
-                    {/* <TableHead>Manufacturer</TableHead> */}
                     <TableHead>Device ID</TableHead>
                     <TableHead>Responsible Person</TableHead>
                     <TableHead>Location</TableHead>
@@ -180,7 +195,7 @@ const DeviceManagement = () => {
                   {currentDevices.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={8}
+                        colSpan={7}
                         className="text-center py-8 text-muted-foreground"
                       >
                         {searchTerm
@@ -197,9 +212,6 @@ const DeviceManagement = () => {
                         <TableCell className="text-foreground">
                           <Badge variant="outline">{device.serialNumber}</Badge>
                         </TableCell>
-                        {/* <TableCell className="text-muted-foreground">
-                          {device.manufacturer}
-                        </TableCell> */}
                         <TableCell className="text-muted-foreground">
                           {device.deviceId}
                         </TableCell>
@@ -222,23 +234,30 @@ const DeviceManagement = () => {
                               variant="ghost"
                               size="icon"
                               onClick={() => handleView(device)}
+                              title="View device details"
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
+                            {/* Users and admins can edit */}
                             <Button
                               variant="ghost"
                               size="icon"
                               onClick={() => handleEdit(device)}
+                              title="Edit device"
                             >
                               <Edit className="h-4 w-4" />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleDelete(device)}
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
+                            {/* Only admins can delete */}
+                            {isAdmin && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleDelete(device)}
+                                title="Delete device"
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -292,6 +311,7 @@ const DeviceManagement = () => {
         </CardContent>
       </Card>
 
+      {/* Users and admins can create and edit */}
       <CreateDeviceDialog
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
@@ -305,17 +325,20 @@ const DeviceManagement = () => {
         onSuccess={fetchDevices}
       />
 
+      {/* Only admins can delete */}
+      {isAdmin && (
+        <DeleteDeviceDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          device={selectedDevice}
+          onSuccess={fetchDevices}
+        />
+      )}
+
       <ViewDeviceDialog
         open={viewDialogOpen}
         onOpenChange={setViewDialogOpen}
         device={selectedDevice}
-      />
-
-      <DeleteDeviceDialog
-        open={deleteDialogOpen}
-        onOpenChange={setDeleteDialogOpen}
-        device={selectedDevice}
-        onSuccess={fetchDevices}
       />
 
       <AlertDialogComponent

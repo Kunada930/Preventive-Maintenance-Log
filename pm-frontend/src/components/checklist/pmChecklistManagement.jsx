@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { authService } from "@/lib/auth";
+import { useAuth } from "@/app/contexts/AuthContext";
 import {
   Card,
   CardContent,
@@ -35,6 +36,7 @@ import AlertDialogComponent from "@/components/AlertDialog";
 import { formatPhilippineDateTime } from "@/lib/dateUtils";
 
 const PMChecklistManagement = () => {
+  const { user: currentUser } = useAuth(); // Get current logged-in user
   const [checklists, setChecklists] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -51,6 +53,9 @@ const PMChecklistManagement = () => {
     description: "",
     variant: "default",
   });
+
+  // Check if current user is admin
+  const isAdmin = currentUser?.role === "admin";
 
   const showAlert = (title, description, variant = "default") => {
     setAlertDialog({ open: true, title, description, variant });
@@ -98,11 +103,21 @@ const PMChecklistManagement = () => {
   };
 
   const handleEdit = (checklist) => {
+    // Users and admins can edit
     setSelectedChecklist(checklist);
     setEditDialogOpen(true);
   };
 
   const handleDelete = (checklist) => {
+    // Only admins can delete
+    if (!isAdmin) {
+      showAlert(
+        "Access Denied",
+        "Only administrators can delete checklists",
+        "destructive",
+      );
+      return;
+    }
     setSelectedChecklist(checklist);
     setDeleteDialogOpen(true);
   };
@@ -164,6 +179,7 @@ const PMChecklistManagement = () => {
                 Manage preventive maintenance checklists for devices
               </CardDescription>
             </div>
+            {/* Users and admins can create checklists */}
             <Button onClick={() => setCreateDialogOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               Create Checklist
@@ -322,23 +338,30 @@ const PMChecklistManagement = () => {
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => handleView(checklist)}
+                                title="View checklist"
                               >
                                 <Eye className="h-4 w-4" />
                               </Button>
+                              {/* Users and admins can edit */}
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => handleEdit(checklist)}
+                                title="Edit checklist"
                               >
                                 <Edit className="h-4 w-4" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleDelete(checklist)}
-                              >
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
+                              {/* Only admins can delete */}
+                              {isAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleDelete(checklist)}
+                                  title="Delete checklist"
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>
@@ -352,16 +375,11 @@ const PMChecklistManagement = () => {
         </CardContent>
       </Card>
 
+      {/* Users and admins can create and edit */}
       <CreateChecklistDialog
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onSuccess={fetchChecklists}
-      />
-
-      <ViewChecklistDialog
-        open={viewDialogOpen}
-        onOpenChange={setViewDialogOpen}
-        checklist={selectedChecklist}
       />
 
       <EditChecklistDialog
@@ -371,11 +389,20 @@ const PMChecklistManagement = () => {
         onSuccess={fetchChecklists}
       />
 
-      <DeleteChecklistDialog
-        open={deleteDialogOpen}
-        onOpenChange={setDeleteDialogOpen}
+      {/* Only admins can delete */}
+      {isAdmin && (
+        <DeleteChecklistDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          checklist={selectedChecklist}
+          onSuccess={fetchChecklists}
+        />
+      )}
+
+      <ViewChecklistDialog
+        open={viewDialogOpen}
+        onOpenChange={setViewDialogOpen}
         checklist={selectedChecklist}
-        onSuccess={fetchChecklists}
       />
 
       <AlertDialogComponent
