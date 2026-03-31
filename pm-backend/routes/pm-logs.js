@@ -1,6 +1,7 @@
 import express from "express";
 import db from "../database.js";
 import { authenticateToken, isAdmin } from "../middleware/auth.js";
+import { logAudit, auditMiddleware } from "../middleware/audit.js";
 
 const router = express.Router();
 
@@ -288,54 +289,58 @@ router.get("/:id", authenticateOrQRToken, (req, res) => {
 });
 
 // Create new PM log
-router.post("/", authenticateToken, (req, res) => {
-  const {
-    deviceId,
-    date,
-    fullyFunctional,
-    recommendation,
-    performedBy,
-    validatedBy,
-    acknowledgedBy,
-    findingsSolutions,
-  } = req.body;
+router.post(
+  "/",
+  authenticateToken,
+  auditMiddleware("CREATE", "pm_log"),
+  (req, res) => {
+    const {
+      deviceId,
+      date,
+      fullyFunctional,
+      recommendation,
+      performedBy,
+      validatedBy,
+      acknowledgedBy,
+      findingsSolutions,
+    } = req.body;
 
-  // Validate required fields
-  if (!deviceId || !date || !fullyFunctional || !performedBy) {
-    return res.status(400).json({
-      error:
-        "Device ID, date, fully functional status, and performed by are required",
-      code: "MISSING_FIELDS",
-    });
-  }
-
-  // Validate fullyFunctional value
-  if (!["Yes", "No"].includes(fullyFunctional)) {
-    return res.status(400).json({
-      error: 'Fully functional must be either "Yes" or "No"',
-      code: "INVALID_FULLY_FUNCTIONAL",
-    });
-  }
-
-  try {
-    // Get device details
-    const device = db
-      .prepare("SELECT * FROM devices WHERE id = ?")
-      .get(deviceId);
-
-    if (!device) {
-      return res.status(404).json({
-        error: "Device not found",
-        code: "DEVICE_NOT_FOUND",
+    // Validate required fields
+    if (!deviceId || !date || !fullyFunctional || !performedBy) {
+      return res.status(400).json({
+        error:
+          "Device ID, date, fully functional status, and performed by are required",
+        code: "MISSING_FIELDS",
       });
     }
 
-    // Create transaction to create log and copy tasks
-    const transaction = db.transaction(() => {
-      // Insert PM log
-      const logResult = db
-        .prepare(
-          `INSERT INTO pm_logs (
+    // Validate fullyFunctional value
+    if (!["Yes", "No"].includes(fullyFunctional)) {
+      return res.status(400).json({
+        error: 'Fully functional must be either "Yes" or "No"',
+        code: "INVALID_FULLY_FUNCTIONAL",
+      });
+    }
+
+    try {
+      // Get device details
+      const device = db
+        .prepare("SELECT * FROM devices WHERE id = ?")
+        .get(deviceId);
+
+      if (!device) {
+        return res.status(404).json({
+          error: "Device not found",
+          code: "DEVICE_NOT_FOUND",
+        });
+      }
+
+      // Create transaction to create log and copy tasks
+      const transaction = db.transaction(() => {
+        // Insert PM log
+        const logResult = db
+          .prepare(
+            `INSERT INTO pm_logs (
             device_id, 
             device_name, 
             serial_number, 
@@ -349,70 +354,73 @@ router.post("/", authenticateToken, (req, res) => {
             findings_solutions
           )
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          device.id,
-          device.device_name,
-          device.serial_number,
-          device.manufacturer,
-          date,
-          fullyFunctional,
-          recommendation || null,
-          performedBy,
-          validatedBy || null,
-          acknowledgedBy || null,
-          findingsSolutions || null,
-        );
+          )
+          .run(
+            device.id,
+            device.device_name,
+            device.serial_number,
+            device.manufacturer,
+            date,
+            fullyFunctional,
+            recommendation || null,
+            performedBy,
+            validatedBy || null,
+            acknowledgedBy || null,
+            findingsSolutions || null,
+          );
 
-      const logId = logResult.lastInsertRowid;
+        const logId = logResult.lastInsertRowid;
 
-      // Get all checklists and tasks for this device
-      const checklists = db
-        .prepare(
-          `SELECT * FROM pm_checklists 
+        // Get all checklists and tasks for this device
+        const checklists = db
+          .prepare(
+            `SELECT * FROM pm_checklists 
            WHERE device_id = ? 
            ORDER BY maintenance_type`,
-        )
-        .all(deviceId);
+          )
+          .all(deviceId);
 
-      // Copy all tasks from checklists to pm_log_tasks
-      for (const checklist of checklists) {
-        const tasks = db
-          .prepare("SELECT * FROM pm_tasks WHERE checklist_id = ?")
-          .all(checklist.id);
+        // Copy all tasks from checklists to pm_log_tasks
+        for (const checklist of checklists) {
+          const tasks = db
+            .prepare("SELECT * FROM pm_tasks WHERE checklist_id = ?")
+            .all(checklist.id);
 
-        for (const task of tasks) {
-          db.prepare(
-            `INSERT INTO pm_log_tasks (pm_log_id, task_description, maintenance_type)
+          for (const task of tasks) {
+            db.prepare(
+              `INSERT INTO pm_log_tasks (pm_log_id, task_description, maintenance_type)
              VALUES (?, ?, ?)`,
-          ).run(logId, task.task_description, checklist.maintenance_type);
+            ).run(logId, task.task_description, checklist.maintenance_type);
+          }
         }
-      }
 
-      return logId;
-    });
+        return logId;
+      });
 
-    const logId = transaction();
+      const logId = transaction();
 
-    // Get the newly created log with tasks
-    const newLog = db.prepare("SELECT * FROM pm_logs WHERE id = ?").get(logId);
-    const tasks = db
-      .prepare("SELECT * FROM pm_log_tasks WHERE pm_log_id = ?")
-      .all(logId);
+      // Get the newly created log with tasks
+      const newLog = db
+        .prepare("SELECT * FROM pm_logs WHERE id = ?")
+        .get(logId);
+      const tasks = db
+        .prepare("SELECT * FROM pm_log_tasks WHERE pm_log_id = ?")
+        .all(logId);
 
-    res.status(201).json({
-      message: "PM log created successfully",
-      log: formatPMLogResponse(newLog),
-      tasks: tasks.map(formatPMLogTaskResponse),
-    });
-  } catch (error) {
-    console.error("Create PM log error:", error);
-    res.status(500).json({
-      error: "An error occurred while creating PM log",
-      code: "SERVER_ERROR",
-    });
-  }
-});
+      res.status(201).json({
+        message: "PM log created successfully",
+        log: formatPMLogResponse(newLog),
+        tasks: tasks.map(formatPMLogTaskResponse),
+      });
+    } catch (error) {
+      console.error("Create PM log error:", error);
+      res.status(500).json({
+        error: "An error occurred while creating PM log",
+        code: "SERVER_ERROR",
+      });
+    }
+  },
+);
 
 // Update PM log
 router.put("/:id", authenticateToken, (req, res) => {
@@ -429,46 +437,50 @@ router.put("/:id", authenticateToken, (req, res) => {
 
   try {
     const log = db.prepare("SELECT * FROM pm_logs WHERE id = ?").get(id);
+    if (!log)
+      return res
+        .status(404)
+        .json({ error: "PM log not found", code: "PM_LOG_NOT_FOUND" });
 
-    if (!log) {
-      return res.status(404).json({
-        error: "PM log not found",
-        code: "PM_LOG_NOT_FOUND",
-      });
-    }
-
-    // Validate fullyFunctional if provided
     if (fullyFunctional && !["Yes", "No"].includes(fullyFunctional)) {
       return res.status(400).json({
-        error: 'Fully functional must be either "Yes" or "No"',
+        error: 'Fully functional must be "Yes" or "No"',
         code: "INVALID_FULLY_FUNCTIONAL",
       });
     }
 
-    // Update PM log
     db.prepare(
-      `UPDATE pm_logs 
-       SET date = COALESCE(?, date),
-           fully_functional = COALESCE(?, fully_functional),
-           recommendation = COALESCE(?, recommendation),
-           performed_by = COALESCE(?, performed_by),
-           validated_by = COALESCE(?, validated_by),
-           acknowledged_by = COALESCE(?, acknowledged_by),
-           findings_solutions = COALESCE(?, findings_solutions),
-           updated_at = datetime('now')
-       WHERE id = ?`,
+      `
+      UPDATE pm_logs 
+      SET date = COALESCE(?, date), fully_functional = COALESCE(?, fully_functional),
+          recommendation = COALESCE(?, recommendation), performed_by = COALESCE(?, performed_by),
+          validated_by = COALESCE(?, validated_by), acknowledged_by = COALESCE(?, acknowledged_by),
+          findings_solutions = COALESCE(?, findings_solutions), updated_at = datetime('now')
+      WHERE id = ?
+    `,
     ).run(
       date || null,
       fullyFunctional || null,
-      recommendation !== undefined ? recommendation : null,
+      recommendation ?? null,
       performedBy || null,
-      validatedBy !== undefined ? validatedBy : null,
-      acknowledgedBy !== undefined ? acknowledgedBy : null,
-      findingsSolutions !== undefined ? findingsSolutions : null,
+      validatedBy ?? null,
+      acknowledgedBy ?? null,
+      findingsSolutions ?? null,
       id,
     );
 
     const updatedLog = db.prepare("SELECT * FROM pm_logs WHERE id = ?").get(id);
+
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "UPDATE",
+      entity: "pm_log",
+      entityId: parseInt(id),
+      oldValue: formatPMLogResponse(log),
+      newValue: formatPMLogResponse(updatedLog),
+      ip: req.ip,
+    });
 
     res.json({
       message: "PM log updated successfully",
@@ -486,19 +498,25 @@ router.put("/:id", authenticateToken, (req, res) => {
 // Delete PM log (admin only) - ADD isAdmin middleware
 router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
   const { id } = req.params;
-
   try {
     const log = db.prepare("SELECT * FROM pm_logs WHERE id = ?").get(id);
+    if (!log)
+      return res
+        .status(404)
+        .json({ error: "PM log not found", code: "DEVICE_NOT_FOUND" });
 
-    if (!log) {
-      return res.status(404).json({
-        error: "PM log not found",
-        code: "DEVICE_NOT_FOUND",
-      });
-    }
-
-    // Delete PM log (tasks will be deleted automatically due to CASCADE)
     db.prepare("DELETE FROM pm_logs WHERE id = ?").run(id);
+
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "DELETE",
+      entity: "pm_log",
+      entityId: parseInt(id),
+      oldValue: formatPMLogResponse(log),
+      newValue: null,
+      ip: req.ip,
+    });
 
     res.json({
       message: "PM log deleted successfully",
@@ -518,35 +536,38 @@ router.put("/tasks/:taskId", authenticateToken, (req, res) => {
   const { taskId } = req.params;
   const { isChecked } = req.body;
 
-  if (isChecked === undefined) {
-    return res.status(400).json({
-      error: "isChecked field is required",
-      code: "MISSING_FIELD",
-    });
-  }
+  if (isChecked === undefined)
+    return res
+      .status(400)
+      .json({ error: "isChecked field is required", code: "MISSING_FIELD" });
 
   try {
     const task = db
       .prepare("SELECT * FROM pm_log_tasks WHERE id = ?")
       .get(taskId);
-
-    if (!task) {
-      return res.status(404).json({
-        error: "Task not found",
-        code: "TASK_NOT_FOUND",
-      });
-    }
+    if (!task)
+      return res
+        .status(404)
+        .json({ error: "Task not found", code: "TASK_NOT_FOUND" });
 
     db.prepare(
-      `UPDATE pm_log_tasks 
-       SET is_checked = ?,
-           updated_at = datetime('now')
-       WHERE id = ?`,
+      `UPDATE pm_log_tasks SET is_checked = ?, updated_at = datetime('now') WHERE id = ?`,
     ).run(isChecked ? 1 : 0, taskId);
 
     const updatedTask = db
       .prepare("SELECT * FROM pm_log_tasks WHERE id = ?")
       .get(taskId);
+
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "UPDATE",
+      entity: "pm_log_task",
+      entityId: parseInt(taskId),
+      oldValue: formatPMLogTaskResponse(task),
+      newValue: formatPMLogTaskResponse(updatedTask),
+      ip: req.ip,
+    });
 
     res.json({
       message: "Task updated successfully",
@@ -562,87 +583,99 @@ router.put("/tasks/:taskId", authenticateToken, (req, res) => {
 });
 
 // Add a new task to a PM log manually
-router.post("/:id/tasks", authenticateToken, (req, res) => {
-  const { id } = req.params;
-  const { taskDescription, maintenanceType } = req.body;
+router.post(
+  "/:id/tasks",
+  authenticateToken,
+  auditMiddleware("CREATE", "pm_log_task"),
+  (req, res) => {
+    const { id } = req.params;
+    const { taskDescription, maintenanceType } = req.body;
 
-  if (!taskDescription || !maintenanceType) {
-    return res.status(400).json({
-      error: "Task description and maintenance type are required",
-      code: "MISSING_FIELDS",
-    });
-  }
-
-  try {
-    // Check if PM log exists
-    const log = db.prepare("SELECT * FROM pm_logs WHERE id = ?").get(id);
-
-    if (!log) {
-      return res.status(404).json({
-        error: "PM log not found",
-        code: "PM_LOG_NOT_FOUND",
-      });
-    }
-
-    // Validate maintenance type
-    const validMaintenanceTypes = [
-      "Hardware Maintenance",
-      "Software Maintenance",
-      "Storage Maintenance",
-      "Network and Connectivity",
-      "Power Source",
-      "Performance and Optimization",
-    ];
-
-    if (!validMaintenanceTypes.includes(maintenanceType)) {
+    if (!taskDescription || !maintenanceType) {
       return res.status(400).json({
-        error: "Invalid maintenance type",
-        code: "INVALID_MAINTENANCE_TYPE",
+        error: "Task description and maintenance type are required",
+        code: "MISSING_FIELDS",
       });
     }
 
-    // Insert new task
-    const result = db
-      .prepare(
-        `INSERT INTO pm_log_tasks (pm_log_id, task_description, maintenance_type)
+    try {
+      // Check if PM log exists
+      const log = db.prepare("SELECT * FROM pm_logs WHERE id = ?").get(id);
+
+      if (!log) {
+        return res.status(404).json({
+          error: "PM log not found",
+          code: "PM_LOG_NOT_FOUND",
+        });
+      }
+
+      // Validate maintenance type
+      const validMaintenanceTypes = [
+        "Hardware Maintenance",
+        "Software Maintenance",
+        "Storage Maintenance",
+        "Network and Connectivity",
+        "Power Source",
+        "Performance and Optimization",
+      ];
+
+      if (!validMaintenanceTypes.includes(maintenanceType)) {
+        return res.status(400).json({
+          error: "Invalid maintenance type",
+          code: "INVALID_MAINTENANCE_TYPE",
+        });
+      }
+
+      // Insert new task
+      const result = db
+        .prepare(
+          `INSERT INTO pm_log_tasks (pm_log_id, task_description, maintenance_type)
          VALUES (?, ?, ?)`,
-      )
-      .run(id, taskDescription, maintenanceType);
+        )
+        .run(id, taskDescription, maintenanceType);
 
-    const newTask = db
-      .prepare("SELECT * FROM pm_log_tasks WHERE id = ?")
-      .get(result.lastInsertRowid);
+      const newTask = db
+        .prepare("SELECT * FROM pm_log_tasks WHERE id = ?")
+        .get(result.lastInsertRowid);
 
-    res.status(201).json({
-      message: "Task added successfully",
-      task: formatPMLogTaskResponse(newTask),
-    });
-  } catch (error) {
-    console.error("Add task error:", error);
-    res.status(500).json({
-      error: "An error occurred while adding task",
-      code: "SERVER_ERROR",
-    });
-  }
-});
+      res.status(201).json({
+        message: "Task added successfully",
+        task: formatPMLogTaskResponse(newTask),
+      });
+    } catch (error) {
+      console.error("Add task error:", error);
+      res.status(500).json({
+        error: "An error occurred while adding task",
+        code: "SERVER_ERROR",
+      });
+    }
+  },
+);
 
 // Delete a task from PM log (admin only) - ADD isAdmin middleware
 router.delete("/tasks/:taskId", authenticateToken, isAdmin, (req, res) => {
   const { taskId } = req.params;
-
   try {
     const task = db
       .prepare("SELECT * FROM pm_log_tasks WHERE id = ?")
       .get(taskId);
-
-    if (!task) {
-      return res.status(404).json({
-        error: "Task not found",
-        code: "TASK_NOT_FOUND",
-      });
-    }
+    if (!task)
+      return res
+        .status(404)
+        .json({ error: "Task not found", code: "TASK_NOT_FOUND" });
 
     db.prepare("DELETE FROM pm_log_tasks WHERE id = ?").run(taskId);
+
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "DELETE",
+      entity: "pm_log_task",
+      entityId: parseInt(taskId),
+      oldValue: formatPMLogTaskResponse(task),
+      newValue: null,
+      ip: req.ip,
+    });
 
     res.json({
       message: "Task deleted successfully",

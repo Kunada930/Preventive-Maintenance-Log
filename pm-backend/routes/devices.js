@@ -1,6 +1,7 @@
 import express from "express";
 import db from "../database.js";
 import { authenticateToken, isAdmin } from "../middleware/auth.js";
+import { logAudit, auditMiddleware } from "../middleware/audit.js";
 
 const router = express.Router();
 
@@ -107,94 +108,99 @@ router.get("/search/:query", authenticateToken, (req, res) => {
 });
 
 // Create new device (admin only)
-router.post("/", authenticateToken, isAdmin, (req, res) => {
-  const {
-    deviceName,
-    serialNumber,
-    manufacturer,
-    deviceId,
-    datePurchased,
-    responsiblePerson,
-    location,
-  } = req.body;
+router.post(
+  "/",
+  authenticateToken,
+  auditMiddleware("CREATE", "device"),
+  (req, res) => {
+    const {
+      deviceName,
+      serialNumber,
+      manufacturer,
+      deviceId,
+      datePurchased,
+      responsiblePerson,
+      location,
+    } = req.body;
 
-  // Validate required fields
-  if (
-    !deviceName ||
-    !serialNumber ||
-    !manufacturer ||
-    !deviceId ||
-    !datePurchased ||
-    !responsiblePerson ||
-    !location
-  ) {
-    return res.status(400).json({
-      error: "All fields are required",
-      code: "MISSING_FIELDS",
-    });
-  }
-
-  try {
-    // Check if serial number already exists
-    const existingSerial = db
-      .prepare("SELECT id FROM devices WHERE serial_number = ?")
-      .get(serialNumber);
-
-    if (existingSerial) {
+    // Validate required fields
+    if (
+      !deviceName ||
+      !serialNumber ||
+      !manufacturer ||
+      !deviceId ||
+      !datePurchased ||
+      !responsiblePerson ||
+      !location
+    ) {
       return res.status(400).json({
-        error: "Serial number already exists",
-        code: "DUPLICATE_SERIAL_NUMBER",
+        error: "All fields are required",
+        code: "MISSING_FIELDS",
       });
     }
 
-    // Check if device ID already exists
-    const existingDeviceId = db
-      .prepare("SELECT id FROM devices WHERE device_id = ?")
-      .get(deviceId);
+    try {
+      // Check if serial number already exists
+      const existingSerial = db
+        .prepare("SELECT id FROM devices WHERE serial_number = ?")
+        .get(serialNumber);
 
-    if (existingDeviceId) {
-      return res.status(400).json({
-        error: "Device ID already exists",
-        code: "DUPLICATE_DEVICE_ID",
-      });
-    }
+      if (existingSerial) {
+        return res.status(400).json({
+          error: "Serial number already exists",
+          code: "DUPLICATE_SERIAL_NUMBER",
+        });
+      }
 
-    // Insert new device
-    const result = db
-      .prepare(
-        `INSERT INTO devices (device_name, serial_number, manufacturer, device_id, date_purchased, responsible_person, location)
+      // Check if device ID already exists
+      const existingDeviceId = db
+        .prepare("SELECT id FROM devices WHERE device_id = ?")
+        .get(deviceId);
+
+      if (existingDeviceId) {
+        return res.status(400).json({
+          error: "Device ID already exists",
+          code: "DUPLICATE_DEVICE_ID",
+        });
+      }
+
+      // Insert new device
+      const result = db
+        .prepare(
+          `INSERT INTO devices (device_name, serial_number, manufacturer, device_id, date_purchased, responsible_person, location)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        deviceName,
-        serialNumber,
-        manufacturer,
-        deviceId,
-        datePurchased,
-        responsiblePerson,
-        location,
-      );
+        )
+        .run(
+          deviceName,
+          serialNumber,
+          manufacturer,
+          deviceId,
+          datePurchased,
+          responsiblePerson,
+          location,
+        );
 
-    // Get the newly created device
-    const newDevice = db
-      .prepare("SELECT * FROM devices WHERE id = ?")
-      .get(result.lastInsertRowid);
+      // Get the newly created device
+      const newDevice = db
+        .prepare("SELECT * FROM devices WHERE id = ?")
+        .get(result.lastInsertRowid);
 
-    res.status(201).json({
-      message: "Device created successfully",
-      device: formatDeviceResponse(newDevice),
-    });
-  } catch (error) {
-    console.error("Create device error:", error);
-    res.status(500).json({
-      error: "An error occurred while creating device",
-      code: "SERVER_ERROR",
-    });
-  }
-});
+      res.status(201).json({
+        message: "Device created successfully",
+        device: formatDeviceResponse(newDevice),
+      });
+    } catch (error) {
+      console.error("Create device error:", error);
+      res.status(500).json({
+        error: "An error occurred while creating device",
+        code: "SERVER_ERROR",
+      });
+    }
+  },
+);
 
 // Update device (admin only)
-router.put("/:id", authenticateToken, isAdmin, (req, res) => {
+router.put("/:id", authenticateToken, (req, res) => {
   const { id } = req.params;
   const {
     deviceName,
@@ -206,7 +212,6 @@ router.put("/:id", authenticateToken, isAdmin, (req, res) => {
     location,
   } = req.body;
 
-  // Validate required fields
   if (
     !deviceName ||
     !serialNumber ||
@@ -216,61 +221,44 @@ router.put("/:id", authenticateToken, isAdmin, (req, res) => {
     !responsiblePerson ||
     !location
   ) {
-    return res.status(400).json({
-      error: "All fields are required",
-      code: "MISSING_FIELDS",
-    });
+    return res
+      .status(400)
+      .json({ error: "All fields are required", code: "MISSING_FIELDS" });
   }
 
   try {
-    // Check if device exists
     const existingDevice = db
       .prepare("SELECT * FROM devices WHERE id = ?")
       .get(id);
+    if (!existingDevice)
+      return res
+        .status(404)
+        .json({ error: "Device not found", code: "DEVICE_NOT_FOUND" });
 
-    if (!existingDevice) {
-      return res.status(404).json({
-        error: "Device not found",
-        code: "DEVICE_NOT_FOUND",
-      });
-    }
-
-    // Check if serial number is taken by another device
     const duplicateSerial = db
       .prepare("SELECT id FROM devices WHERE serial_number = ? AND id != ?")
       .get(serialNumber, id);
-
-    if (duplicateSerial) {
+    if (duplicateSerial)
       return res.status(400).json({
         error: "Serial number already exists",
         code: "DUPLICATE_SERIAL_NUMBER",
       });
-    }
 
-    // Check if device ID is taken by another device
     const duplicateDeviceId = db
       .prepare("SELECT id FROM devices WHERE device_id = ? AND id != ?")
       .get(deviceId, id);
-
-    if (duplicateDeviceId) {
+    if (duplicateDeviceId)
       return res.status(400).json({
         error: "Device ID already exists",
         code: "DUPLICATE_DEVICE_ID",
       });
-    }
 
-    // Update device
     db.prepare(
-      `UPDATE devices 
-       SET device_name = ?, 
-           serial_number = ?, 
-           manufacturer = ?, 
-           device_id = ?, 
-           date_purchased = ?, 
-           responsible_person = ?, 
-           location = ?,
-           updated_at = datetime('now')
-       WHERE id = ?`,
+      `
+      UPDATE devices SET device_name = ?, serial_number = ?, manufacturer = ?, device_id = ?,
+        date_purchased = ?, responsible_person = ?, location = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `,
     ).run(
       deviceName,
       serialNumber,
@@ -282,10 +270,20 @@ router.put("/:id", authenticateToken, isAdmin, (req, res) => {
       id,
     );
 
-    // Get updated device
     const updatedDevice = db
       .prepare("SELECT * FROM devices WHERE id = ?")
       .get(id);
+
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "UPDATE",
+      entity: "device",
+      entityId: parseInt(id),
+      oldValue: formatDeviceResponse(existingDevice),
+      newValue: formatDeviceResponse(updatedDevice),
+      ip: req.ip,
+    });
 
     res.json({
       message: "Device updated successfully",
@@ -303,20 +301,25 @@ router.put("/:id", authenticateToken, isAdmin, (req, res) => {
 // Delete device (admin only)
 router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
   const { id } = req.params;
-
   try {
-    // Check if device exists
     const device = db.prepare("SELECT * FROM devices WHERE id = ?").get(id);
+    if (!device)
+      return res
+        .status(404)
+        .json({ error: "Device not found", code: "DEVICE_NOT_FOUND" });
 
-    if (!device) {
-      return res.status(404).json({
-        error: "Device not found",
-        code: "DEVICE_NOT_FOUND",
-      });
-    }
-
-    // Delete device
     db.prepare("DELETE FROM devices WHERE id = ?").run(id);
+
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "DELETE",
+      entity: "device",
+      entityId: parseInt(id),
+      oldValue: formatDeviceResponse(device),
+      newValue: null,
+      ip: req.ip,
+    });
 
     res.json({
       message: "Device deleted successfully",

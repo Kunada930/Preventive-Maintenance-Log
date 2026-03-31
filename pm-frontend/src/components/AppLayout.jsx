@@ -247,7 +247,7 @@ export default function AppLayout({ children }) {
                       className="w-full flex items-center gap-3 px-3 py-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
                     >
                       <User size={16} className="flex-shrink-0" />
-                      <span>Account</span>
+                      <span>Profile</span>
                     </button>
                   </div>
                   <div className="border-t border-sidebar-border" />

@@ -135,9 +135,8 @@ db.exec(`
   )
 `);
 
-// ============================================
-// NEW: QR Tokens Table for Device History Access
-// ============================================
+// QR Tokens Table for Device History Access
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS qr_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,6 +149,24 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
     FOREIGN KEY (generated_by) REFERENCES users(id) ON DELETE CASCADE
+  )
+`);
+
+// Audit Logs Table
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    action TEXT NOT NULL,
+    entity TEXT NOT NULL,
+    entity_id INTEGER,
+    old_value TEXT,
+    new_value TEXT,
+    ip_address TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   )
 `);
 
@@ -206,6 +223,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_qr_tokens_token ON qr_tokens(token);
   CREATE INDEX IF NOT EXISTS idx_qr_tokens_device_id ON qr_tokens(device_id);
   CREATE INDEX IF NOT EXISTS idx_qr_tokens_expires_at ON qr_tokens(expires_at);
+`);
+
+// Indexes for faster audit log queries
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity);
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
 `);
 
 console.log("Connected to PM Log Database");

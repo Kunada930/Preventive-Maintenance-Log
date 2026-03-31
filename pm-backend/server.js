@@ -10,6 +10,7 @@ import pmChecklistRoutes from "./routes/pm-checklist.js";
 import usersRoutes from "./routes/usersRoutes.js";
 import pmLogsRoutes from "./routes/pm-logs.js";
 import qrTokenRoutes from "./routes/qr-tokens.js";
+import auditRoutes from "./routes/audit.js";
 import { authenticateToken, isAdmin } from "./middleware/auth.js";
 
 dotenv.config();
@@ -66,6 +67,9 @@ app.use("/api/pm-logs", pmLogsRoutes);
 
 // QR Token routes
 app.use("/api/qr-tokens", qrTokenRoutes);
+
+// Audit log routes (admin only)
+app.use("/api/audit", auditRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

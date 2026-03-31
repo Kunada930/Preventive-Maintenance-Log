@@ -1,12 +1,12 @@
 import express from "express";
 import db from "../database.js";
 import { authenticateToken, isAdmin } from "../middleware/auth.js";
+import { logAudit, auditMiddleware } from "../middleware/audit.js";
 
 const router = express.Router();
 
 // Helper function to format checklist response
 function formatChecklistResponse(checklist) {
-  // Parse maintenance_type if it's a JSON string
   let maintenanceType = checklist.maintenance_type;
   try {
     maintenanceType = JSON.parse(checklist.maintenance_type);
@@ -46,7 +46,9 @@ function formatTaskResponse(task) {
   };
 }
 
-// Get all checklists (all authenticated users can read)
+// ============================================
+// GET all checklists (all authenticated users)
+// ============================================
 router.get("/", authenticateToken, (req, res) => {
   try {
     const checklists = db
@@ -65,12 +67,13 @@ router.get("/", authenticateToken, (req, res) => {
   }
 });
 
-// Get checklist by ID with tasks (all authenticated users can read)
+// ============================================
+// GET single checklist by ID with tasks
+// ============================================
 router.get("/:id", authenticateToken, (req, res) => {
   const { id } = req.params;
 
   try {
-    // Get checklist
     const checklist = db
       .prepare("SELECT * FROM pm_checklists WHERE id = ?")
       .get(id);
@@ -82,7 +85,6 @@ router.get("/:id", authenticateToken, (req, res) => {
       });
     }
 
-    // Get all tasks for this checklist
     const tasks = db
       .prepare("SELECT * FROM pm_tasks WHERE checklist_id = ? ORDER BY id ASC")
       .all(id);
@@ -100,168 +102,161 @@ router.get("/:id", authenticateToken, (req, res) => {
   }
 });
 
-// Create new checklist (admin only)
-router.post("/", authenticateToken, isAdmin, (req, res) => {
-  const { deviceId, maintenanceTypes, taskFrequency, tasks } = req.body;
+// ============================================
+// CREATE checklist — audit via middleware
+// ============================================
+router.post(
+  "/",
+  authenticateToken,
+  auditMiddleware("CREATE", "pm_checklist"),
+  (req, res) => {
+    const { deviceId, maintenanceTypes, taskFrequency, tasks } = req.body;
 
-  // Validate required fields
-  if (
-    !deviceId ||
-    !maintenanceTypes ||
-    !Array.isArray(maintenanceTypes) ||
-    maintenanceTypes.length === 0 ||
-    !taskFrequency ||
-    !tasks ||
-    !Array.isArray(tasks)
-  ) {
-    return res.status(400).json({
-      error:
-        "Device ID, maintenance types array, task frequency, and tasks array are required",
-      code: "MISSING_FIELDS",
-    });
-  }
-
-  if (tasks.length === 0) {
-    return res.status(400).json({
-      error: "At least one task is required",
-      code: "NO_TASKS",
-    });
-  }
-
-  try {
-    // Get device details
-    const device = db
-      .prepare("SELECT * FROM devices WHERE id = ?")
-      .get(deviceId);
-
-    if (!device) {
-      return res.status(404).json({
-        error: "Device not found",
-        code: "DEVICE_NOT_FOUND",
-      });
-    }
-
-    // Validate maintenance types
-    const validMaintenanceTypes = [
-      "Hardware Maintenance",
-      "Software Maintenance",
-      "Storage Maintenance",
-      "Network and Connectivity",
-      "Power Source",
-      "Performance and Optimization",
-    ];
-
-    for (const type of maintenanceTypes) {
-      if (!validMaintenanceTypes.includes(type)) {
-        return res.status(400).json({
-          error: `Invalid maintenance type: ${type}`,
-          code: "INVALID_MAINTENANCE_TYPE",
-        });
-      }
-    }
-
-    // Validate task frequency
-    const validFrequencies = [
-      "Daily",
-      "Weekly",
-      "Monthly",
-      "Quarterly",
-      "Annually",
-    ];
-    if (!validFrequencies.includes(taskFrequency)) {
+    if (
+      !deviceId ||
+      !maintenanceTypes ||
+      !Array.isArray(maintenanceTypes) ||
+      maintenanceTypes.length === 0 ||
+      !taskFrequency ||
+      !tasks ||
+      !Array.isArray(tasks)
+    ) {
       return res.status(400).json({
         error:
-          "Invalid task frequency. Must be: Daily, Weekly, Monthly, Quarterly, or Annually",
-        code: "INVALID_FREQUENCY",
+          "Device ID, maintenance types array, task frequency, and tasks array are required",
+        code: "MISSING_FIELDS",
       });
     }
 
-    // Convert maintenance types array to JSON string for storage
-    const maintenanceTypesJson = JSON.stringify(maintenanceTypes);
+    if (tasks.length === 0) {
+      return res.status(400).json({
+        error: "At least one task is required",
+        code: "NO_TASKS",
+      });
+    }
 
-    // Prepare statements
-    const insertChecklist = db.prepare(`
-      INSERT INTO pm_checklists (
-        device_id, 
-        device_name, 
-        serial_number, 
-        manufacturer, 
-        device_id_number, 
-        date_purchased, 
-        responsible_person, 
-        location,
-        maintenance_type, 
-        task_frequency
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    try {
+      const device = db
+        .prepare("SELECT * FROM devices WHERE id = ?")
+        .get(deviceId);
 
-    const insertTask = db.prepare(`
-      INSERT INTO pm_tasks (checklist_id, task_description)
-      VALUES (?, ?)
-    `);
-
-    // Create ONE checklist with all maintenance types
-    const transaction = db.transaction(() => {
-      // Insert single checklist with JSON array of maintenance types
-      const checklistResult = insertChecklist.run(
-        device.id,
-        device.device_name,
-        device.serial_number,
-        device.manufacturer,
-        device.device_id,
-        device.date_purchased,
-        device.responsible_person,
-        device.location,
-        maintenanceTypesJson,
-        taskFrequency,
-      );
-
-      const checklistId = checklistResult.lastInsertRowid;
-
-      // Insert all tasks for this checklist
-      for (const task of tasks) {
-        if (!task.taskDescription || task.taskDescription.trim() === "") {
-          throw new Error("Task description cannot be empty");
-        }
-        insertTask.run(checklistId, task.taskDescription);
+      if (!device) {
+        return res.status(404).json({
+          error: "Device not found",
+          code: "DEVICE_NOT_FOUND",
+        });
       }
 
-      return checklistId;
-    });
+      const validMaintenanceTypes = [
+        "Hardware Maintenance",
+        "Software Maintenance",
+        "Storage Maintenance",
+        "Network and Connectivity",
+        "Power Source",
+        "Performance and Optimization",
+      ];
 
-    const checklistId = transaction();
+      for (const type of maintenanceTypes) {
+        if (!validMaintenanceTypes.includes(type)) {
+          return res.status(400).json({
+            error: `Invalid maintenance type: ${type}`,
+            code: "INVALID_MAINTENANCE_TYPE",
+          });
+        }
+      }
 
-    // Get the newly created checklist with tasks
-    const checklist = db
-      .prepare("SELECT * FROM pm_checklists WHERE id = ?")
-      .get(checklistId);
+      const validFrequencies = [
+        "Daily",
+        "Weekly",
+        "Monthly",
+        "Quarterly",
+        "Annually",
+      ];
+      if (!validFrequencies.includes(taskFrequency)) {
+        return res.status(400).json({
+          error:
+            "Invalid task frequency. Must be: Daily, Weekly, Monthly, Quarterly, or Annually",
+          code: "INVALID_FREQUENCY",
+        });
+      }
 
-    const checklistTasks = db
-      .prepare("SELECT * FROM pm_tasks WHERE checklist_id = ? ORDER BY id ASC")
-      .all(checklistId);
+      const maintenanceTypesJson = JSON.stringify(maintenanceTypes);
 
-    res.status(201).json({
-      message: "Checklist created successfully",
-      checklist: formatChecklistResponse(checklist),
-      tasks: checklistTasks.map(formatTaskResponse),
-    });
-  } catch (error) {
-    console.error("Create checklist error:", error);
-    res.status(500).json({
-      error: error.message || "An error occurred while creating checklist",
-      code: "SERVER_ERROR",
-    });
-  }
-});
+      const insertChecklist = db.prepare(`
+        INSERT INTO pm_checklists (
+          device_id, device_name, serial_number, manufacturer,
+          device_id_number, date_purchased, responsible_person,
+          location, maintenance_type, task_frequency
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
 
-// Update checklist (admin only)
-router.put("/:id", authenticateToken, isAdmin, (req, res) => {
+      const insertTask = db.prepare(`
+        INSERT INTO pm_tasks (checklist_id, task_description)
+        VALUES (?, ?)
+      `);
+
+      const transaction = db.transaction(() => {
+        const checklistResult = insertChecklist.run(
+          device.id,
+          device.device_name,
+          device.serial_number,
+          device.manufacturer,
+          device.device_id,
+          device.date_purchased,
+          device.responsible_person,
+          device.location,
+          maintenanceTypesJson,
+          taskFrequency,
+        );
+
+        const checklistId = checklistResult.lastInsertRowid;
+
+        for (const task of tasks) {
+          if (!task.taskDescription || task.taskDescription.trim() === "") {
+            throw new Error("Task description cannot be empty");
+          }
+          insertTask.run(checklistId, task.taskDescription);
+        }
+
+        return checklistId;
+      });
+
+      const checklistId = transaction();
+
+      const checklist = db
+        .prepare("SELECT * FROM pm_checklists WHERE id = ?")
+        .get(checklistId);
+
+      const checklistTasks = db
+        .prepare(
+          "SELECT * FROM pm_tasks WHERE checklist_id = ? ORDER BY id ASC",
+        )
+        .all(checklistId);
+
+      res.status(201).json({
+        message: "Checklist created successfully",
+        checklist: formatChecklistResponse(checklist),
+        tasks: checklistTasks.map(formatTaskResponse),
+      });
+    } catch (error) {
+      console.error("Create checklist error:", error);
+      res.status(500).json({
+        error: error.message || "An error occurred while creating checklist",
+        code: "SERVER_ERROR",
+      });
+    }
+  },
+);
+
+// ============================================
+// UPDATE checklist — logAudit directly (needs old/new snapshot)
+// ============================================
+router.put("/:id", authenticateToken, (req, res) => {
   const { id } = req.params;
   const { maintenanceTypes, taskFrequency } = req.body;
 
   try {
-    // Check if checklist exists
     const checklist = db
       .prepare("SELECT * FROM pm_checklists WHERE id = ?")
       .get(id);
@@ -273,7 +268,6 @@ router.put("/:id", authenticateToken, isAdmin, (req, res) => {
       });
     }
 
-    // Validate maintenance types if provided
     if (maintenanceTypes) {
       if (!Array.isArray(maintenanceTypes) || maintenanceTypes.length === 0) {
         return res.status(400).json({
@@ -301,7 +295,6 @@ router.put("/:id", authenticateToken, isAdmin, (req, res) => {
       }
     }
 
-    // Validate task frequency if provided
     if (taskFrequency) {
       const validFrequencies = [
         "Daily",
@@ -319,15 +312,13 @@ router.put("/:id", authenticateToken, isAdmin, (req, res) => {
       }
     }
 
-    // Convert maintenance types to JSON if provided
     const maintenanceTypesJson = maintenanceTypes
       ? JSON.stringify(maintenanceTypes)
       : null;
 
-    // Update checklist
     db.prepare(
       `
-      UPDATE pm_checklists 
+      UPDATE pm_checklists
       SET maintenance_type = COALESCE(?, maintenance_type),
           task_frequency = COALESCE(?, task_frequency),
           updated_at = datetime('now')
@@ -335,10 +326,21 @@ router.put("/:id", authenticateToken, isAdmin, (req, res) => {
     `,
     ).run(maintenanceTypesJson, taskFrequency || null, id);
 
-    // Get updated checklist
     const updatedChecklist = db
       .prepare("SELECT * FROM pm_checklists WHERE id = ?")
       .get(id);
+
+    // Audit with before/after snapshot
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "UPDATE",
+      entity: "pm_checklist",
+      entityId: parseInt(id),
+      oldValue: formatChecklistResponse(checklist),
+      newValue: formatChecklistResponse(updatedChecklist),
+      ip: req.ip,
+    });
 
     res.json({
       message: "Checklist updated successfully",
@@ -353,12 +355,13 @@ router.put("/:id", authenticateToken, isAdmin, (req, res) => {
   }
 });
 
-// Delete checklist (admin only)
+// ============================================
+// DELETE checklist (admin only)
+// ============================================
 router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
   const { id } = req.params;
 
   try {
-    // Check if checklist exists
     const checklist = db
       .prepare("SELECT * FROM pm_checklists WHERE id = ?")
       .get(id);
@@ -370,10 +373,20 @@ router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
       });
     }
 
-    // Delete checklist (tasks will be deleted automatically if you have CASCADE)
-    // If not, delete tasks first
     db.prepare("DELETE FROM pm_tasks WHERE checklist_id = ?").run(id);
     db.prepare("DELETE FROM pm_checklists WHERE id = ?").run(id);
+
+    // Audit before the record is gone
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "DELETE",
+      entity: "pm_checklist",
+      entityId: parseInt(id),
+      oldValue: formatChecklistResponse(checklist),
+      newValue: null,
+      ip: req.ip,
+    });
 
     res.json({
       message: "Checklist deleted successfully",
@@ -388,61 +401,63 @@ router.delete("/:id", authenticateToken, isAdmin, (req, res) => {
   }
 });
 
-// Create new task for a checklist (admin only)
-router.post("/:id/tasks", authenticateToken, isAdmin, (req, res) => {
-  const { id } = req.params;
-  const { taskDescription } = req.body;
+// ============================================
+// CREATE task for a checklist — audit via middleware
+// ============================================
+router.post(
+  "/:id/tasks",
+  authenticateToken,
+  auditMiddleware("CREATE", "pm_checklist_task"),
+  (req, res) => {
+    const { id } = req.params;
+    const { taskDescription } = req.body;
 
-  try {
-    // Check if checklist exists
-    const checklist = db
-      .prepare("SELECT * FROM pm_checklists WHERE id = ?")
-      .get(id);
+    try {
+      const checklist = db
+        .prepare("SELECT * FROM pm_checklists WHERE id = ?")
+        .get(id);
 
-    if (!checklist) {
-      return res.status(404).json({
-        error: "Checklist not found",
-        code: "CHECKLIST_NOT_FOUND",
+      if (!checklist) {
+        return res.status(404).json({
+          error: "Checklist not found",
+          code: "CHECKLIST_NOT_FOUND",
+        });
+      }
+
+      if (!taskDescription || taskDescription.trim() === "") {
+        return res.status(400).json({
+          error: "Task description is required",
+          code: "MISSING_TASK_DESCRIPTION",
+        });
+      }
+
+      const result = db
+        .prepare(
+          `INSERT INTO pm_tasks (checklist_id, task_description) VALUES (?, ?)`,
+        )
+        .run(id, taskDescription);
+
+      const newTask = db
+        .prepare("SELECT * FROM pm_tasks WHERE id = ?")
+        .get(result.lastInsertRowid);
+
+      res.status(201).json({
+        message: "Task created successfully",
+        task: formatTaskResponse(newTask),
+      });
+    } catch (error) {
+      console.error("Create task error:", error);
+      res.status(500).json({
+        error: "An error occurred while creating task",
+        code: "SERVER_ERROR",
       });
     }
+  },
+);
 
-    // Validate task description
-    if (!taskDescription || taskDescription.trim() === "") {
-      return res.status(400).json({
-        error: "Task description is required",
-        code: "MISSING_TASK_DESCRIPTION",
-      });
-    }
-
-    // Insert task
-    const result = db
-      .prepare(
-        `
-      INSERT INTO pm_tasks (checklist_id, task_description)
-      VALUES (?, ?)
-    `,
-      )
-      .run(id, taskDescription);
-
-    // Get the newly created task
-    const newTask = db
-      .prepare("SELECT * FROM pm_tasks WHERE id = ?")
-      .get(result.lastInsertRowid);
-
-    res.status(201).json({
-      message: "Task created successfully",
-      task: formatTaskResponse(newTask),
-    });
-  } catch (error) {
-    console.error("Create task error:", error);
-    res.status(500).json({
-      error: "An error occurred while creating task",
-      code: "SERVER_ERROR",
-    });
-  }
-});
-
-// Update task completion status and notes (all authenticated users)
+// ============================================
+// UPDATE task completion status and notes
+// ============================================
 router.put("/tasks/:taskId", authenticateToken, (req, res) => {
   const { taskId } = req.params;
   const { isCompleted, notes } = req.body;
@@ -457,12 +472,11 @@ router.put("/tasks/:taskId", authenticateToken, (req, res) => {
       });
     }
 
-    // Get current user info for completedBy
-    const user = req.user; // This comes from authenticateToken middleware
+    const user = req.user;
 
     db.prepare(
       `
-      UPDATE pm_tasks 
+      UPDATE pm_tasks
       SET is_completed = ?,
           notes = ?,
           completed_by = ?,
@@ -482,6 +496,18 @@ router.put("/tasks/:taskId", authenticateToken, (req, res) => {
       .prepare("SELECT * FROM pm_tasks WHERE id = ?")
       .get(taskId);
 
+    // Audit with before/after snapshot
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "UPDATE",
+      entity: "pm_checklist_task",
+      entityId: parseInt(taskId),
+      oldValue: formatTaskResponse(task),
+      newValue: formatTaskResponse(updatedTask),
+      ip: req.ip,
+    });
+
     res.json({
       message: "Task updated successfully",
       task: formatTaskResponse(updatedTask),
@@ -495,7 +521,9 @@ router.put("/tasks/:taskId", authenticateToken, (req, res) => {
   }
 });
 
-// Update task description (admin only)
+// ============================================
+// UPDATE task description (admin only)
+// ============================================
 router.put(
   "/tasks/:taskId/description",
   authenticateToken,
@@ -516,7 +544,6 @@ router.put(
         });
       }
 
-      // Validate task description
       if (!taskDescription || taskDescription.trim() === "") {
         return res.status(400).json({
           error: "Task description is required",
@@ -526,16 +553,28 @@ router.put(
 
       db.prepare(
         `
-      UPDATE pm_tasks 
-      SET task_description = ?,
-          updated_at = datetime('now')
-      WHERE id = ?
-    `,
+        UPDATE pm_tasks
+        SET task_description = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+      `,
       ).run(taskDescription, taskId);
 
       const updatedTask = db
         .prepare("SELECT * FROM pm_tasks WHERE id = ?")
         .get(taskId);
+
+      // Audit with before/after snapshot
+      logAudit({
+        userId: req.user.id,
+        username: req.user.username,
+        action: "UPDATE",
+        entity: "pm_checklist_task",
+        entityId: parseInt(taskId),
+        oldValue: formatTaskResponse(task),
+        newValue: formatTaskResponse(updatedTask),
+        ip: req.ip,
+      });
 
       res.json({
         message: "Task description updated successfully",
@@ -551,7 +590,9 @@ router.put(
   },
 );
 
-// Delete task (admin only)
+// ============================================
+// DELETE task (admin only)
+// ============================================
 router.delete("/tasks/:taskId", authenticateToken, isAdmin, (req, res) => {
   const { taskId } = req.params;
 
@@ -566,6 +607,18 @@ router.delete("/tasks/:taskId", authenticateToken, isAdmin, (req, res) => {
     }
 
     db.prepare("DELETE FROM pm_tasks WHERE id = ?").run(taskId);
+
+    // Audit before deletion
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "DELETE",
+      entity: "pm_checklist_task",
+      entityId: parseInt(taskId),
+      oldValue: formatTaskResponse(task),
+      newValue: null,
+      ip: req.ip,
+    });
 
     res.json({
       message: "Task deleted successfully",
