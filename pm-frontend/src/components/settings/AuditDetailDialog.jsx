@@ -32,6 +32,24 @@ const ENTITY_LABELS = {
   auth: "Auth",
 };
 
+// ── IP masking ─────────────────────────────────────────────────────────────
+// Masks the 3rd and 4th octets of IPv4 addresses
+// e.g. 192.168.1.45 → 192.168.xxx.xxx
+function maskIp(ip) {
+  if (!ip) return "—";
+  const raw = ip.replace(/^::ffff:/i, "");
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(raw)) {
+    return raw.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)/, "$1.$2.xxx.xxx");
+  }
+  if (raw.includes(":")) {
+    const parts = raw.split(":");
+    parts[parts.length - 1] = "xxx";
+    parts[parts.length - 3] = "xxx";
+    return parts.join(":");
+  }
+  return "xxx.xxx.xxx.xxx";
+}
+
 // Renders a single key-value field, highlighting changed values
 function FieldRow({ label, oldVal, newVal, changed }) {
   const fmt = (v) => {

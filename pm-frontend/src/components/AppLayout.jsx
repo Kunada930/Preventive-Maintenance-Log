@@ -11,6 +11,7 @@ import {
   Moon,
   NotepadText,
   MonitorCog,
+  ClipboardClock,
 } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/app/contexts/AuthContext";
@@ -45,6 +46,13 @@ export default function AppLayout({ children }) {
       icon: MonitorCog,
       href: "/pm-configuration",
       roles: ["admin", "user"], // Both roles can access
+    },
+    {
+      id: "reports",
+      label: "Reports",
+      icon: ClipboardClock,
+      href: "/reports",
+      roles: ["admin"],
     },
     {
       id: "settings",

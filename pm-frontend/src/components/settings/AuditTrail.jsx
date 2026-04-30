@@ -40,6 +40,23 @@ import AuditDetailDialog from "@/components/settings/AuditDetailDialog";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+// Masks the 3rd and 4th octets of IPv4 addresses
+// e.g. 192.168.1.45 → 192.168.xxx.xxx
+function maskIp(ip) {
+  if (!ip) return "—";
+  const raw = ip.replace(/^::ffff:/i, "");
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(raw)) {
+    return raw.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)/, "$1.$2.xxx.xxx");
+  }
+  if (raw.includes(":")) {
+    const parts = raw.split(":");
+    parts[parts.length - 1] = "xxx";
+    parts[parts.length - 3] = "xxx";
+    return parts.join(":");
+  }
+  return "xxx.xxx.xxx.xxx";
+}
+
 const ACTION_META = {
   CREATE: {
     label: "Create",
@@ -51,21 +68,21 @@ const ACTION_META = {
     variant: "secondary",
     className: "bg-blue-600 hover:bg-blue-700 text-white",
   },
-  DELETE: {
+  DELETE: { 
     label: "Delete",
     variant: "destructive",
     className: "bg-red-600 hover:bg-red-700 text-white",
   },
-  LOGIN: {
-    label: "Login",
-    variant: "outline",
-    className: "border-violet-500 text-violet-600",
-  },
-  LOGOUT: {
-    label: "Logout",
-    variant: "outline",
-    className: "border-slate-400 text-slate-500",
-  },
+LOGIN: {
+  label: "Login",
+  variant: "default",
+  className: "bg-violet-600 hover:bg-violet-700 text-white",
+},
+LOGOUT: {
+  label: "Logout",
+  variant: "default",
+  className: "bg-slate-500 hover:bg-slate-600 text-white",
+},
 };
 
 const ENTITY_LABELS = {
