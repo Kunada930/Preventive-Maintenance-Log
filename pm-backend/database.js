@@ -20,6 +20,8 @@ db.exec(`
     role TEXT DEFAULT 'admin',
     profile_picture TEXT,
     must_change_password INTEGER DEFAULT 1,
+    failed_login_attempts INTEGER DEFAULT 0,
+    locked_until TEXT DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   )
@@ -136,7 +138,6 @@ db.exec(`
 `);
 
 // QR Tokens Table for Device History Access
-
 db.exec(`
   CREATE TABLE IF NOT EXISTS qr_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,7 +154,6 @@ db.exec(`
 `);
 
 // Audit Logs Table
-
 db.exec(`
   CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -170,27 +170,27 @@ db.exec(`
   )
 `);
 
-// Create index for faster password history queries
+// ─────────────────────────────────────────────────────────────────────────────
+// Indexes
+// ─────────────────────────────────────────────────────────────────────────────
+
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_password_history_user_id ON password_history(user_id);
   CREATE INDEX IF NOT EXISTS idx_password_history_created_at ON password_history(created_at);
 `);
 
-// Create index for faster refresh token queries
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
   CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
   CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires_at ON refresh_tokens(expires_at);
 `);
 
-// Create index for faster device queries
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_devices_serial_number ON devices(serial_number);
   CREATE INDEX IF NOT EXISTS idx_devices_device_id ON devices(device_id);
   CREATE INDEX IF NOT EXISTS idx_devices_responsible_person ON devices(responsible_person);
 `);
 
-// Create index for faster PM checklist queries
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_pm_checklists_device_id ON pm_checklists(device_id);
   CREATE INDEX IF NOT EXISTS idx_pm_checklists_maintenance_type ON pm_checklists(maintenance_type);
@@ -198,13 +198,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_pm_checklists_created_at ON pm_checklists(created_at);
 `);
 
-// Create index for faster PM task queries
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_pm_tasks_checklist_id ON pm_tasks(checklist_id);
   CREATE INDEX IF NOT EXISTS idx_pm_tasks_is_completed ON pm_tasks(is_completed);
 `);
 
-// Create index for faster PM log queries
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_pm_logs_device_id ON pm_logs(device_id);
   CREATE INDEX IF NOT EXISTS idx_pm_logs_date ON pm_logs(date);
@@ -212,25 +210,27 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_pm_logs_performed_by ON pm_logs(performed_by);
 `);
 
-// Create index for faster PM log task queries
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_pm_log_tasks_pm_log_id ON pm_log_tasks(pm_log_id);
   CREATE INDEX IF NOT EXISTS idx_pm_log_tasks_is_checked ON pm_log_tasks(is_checked);
 `);
 
-// Create index for faster QR token queries
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_qr_tokens_token ON qr_tokens(token);
   CREATE INDEX IF NOT EXISTS idx_qr_tokens_device_id ON qr_tokens(device_id);
   CREATE INDEX IF NOT EXISTS idx_qr_tokens_expires_at ON qr_tokens(expires_at);
 `);
 
-// Indexes for faster audit log queries
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
   CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
   CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity);
   CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
+`);
+
+// Index for lockout queries — speeds up checking locked_until on every login
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_users_locked_until ON users(locked_until);
 `);
 
 console.log("Connected to PM Log Database");

@@ -18,5 +18,8 @@ export function formatUserResponse(user) {
     mustChangePassword: user.must_change_password === 1,
     createdAt: user.created_at,
     updatedAt: user.updated_at,
+    // Lockout fields — required for the admin unlock button and lock status badge
+    failedLoginAttempts: user.failed_login_attempts ?? 0,
+    lockedUntil: user.locked_until ?? null,
   };
 }

@@ -3,6 +3,21 @@
 const API_URL =
   process.env.NEXT_PUBLIC_AUTH_URL || "http://172.16.21.12:4000/api/auth";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Structured auth error — carries the backend's code, attemptsLeft, and
+// lockedUntil fields through to the UI instead of collapsing them into a
+// plain string message.
+// ─────────────────────────────────────────────────────────────────────────────
+export class AuthError extends Error {
+  constructor({ message, code, attemptsLeft, lockedUntil }) {
+    super(message);
+    this.name = "AuthError";
+    this.code = code || null;
+    this.attemptsLeft = attemptsLeft ?? null;
+    this.lockedUntil = lockedUntil ? new Date(lockedUntil) : null;
+  }
+}
+
 class AuthService {
   constructor() {
     this.isRefreshing = false;
@@ -20,20 +35,26 @@ class AuthService {
     this.refreshSubscribers = [];
   }
 
+  // ── Login ──────────────────────────────────────────────────────────────────
   async login(username, password) {
     const response = await fetch(`${API_URL}/login`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: "include", // Important: includes cookies
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify({ username, password }),
     });
 
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.error || "Login failed");
+      // Throw a structured error so the login page can read code,
+      // attemptsLeft, and lockedUntil — not just the message string.
+      throw new AuthError({
+        message: data.error || "Login failed",
+        code: data.code,
+        attemptsLeft: data.attemptsLeft,
+        lockedUntil: data.lockedUntil,
+      });
     }
 
     // Store access token and user data (refresh token is in httpOnly cookie)
@@ -46,11 +67,12 @@ class AuthService {
     return data;
   }
 
+  // ── Refresh access token ───────────────────────────────────────────────────
   async refreshAccessToken() {
     try {
       const response = await fetch(`${API_URL}/refresh`, {
         method: "POST",
-        credentials: "include", // Important: sends refresh token cookie
+        credentials: "include",
       });
 
       if (!response.ok) {
@@ -64,10 +86,7 @@ class AuthService {
       const auth = JSON.parse(localStorage.getItem("auth") || "{}");
       localStorage.setItem(
         "auth",
-        JSON.stringify({
-          ...auth,
-          token: data.token,
-        }),
+        JSON.stringify({ ...auth, token: data.token }),
       );
 
       return data.token;
@@ -78,28 +97,23 @@ class AuthService {
     }
   }
 
+  // ── Verify token ───────────────────────────────────────────────────────────
   async verifyToken() {
     const token = this.getToken();
 
-    if (!token) {
-      return null;
-    }
+    if (!token) return null;
 
     try {
       const response = await fetch(`${API_URL}/verify`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
         credentials: "include",
       });
 
       if (!response.ok) {
-        // Try to refresh token
         try {
           await this.refreshAccessToken();
-          // Retry verification with new token
           return await this.verifyToken();
-        } catch (refreshError) {
+        } catch {
           this.logout();
           return null;
         }
@@ -111,10 +125,7 @@ class AuthService {
       const auth = JSON.parse(localStorage.getItem("auth") || "{}");
       localStorage.setItem(
         "auth",
-        JSON.stringify({
-          ...auth,
-          user: data.user,
-        }),
+        JSON.stringify({ ...auth, user: data.user }),
       );
 
       return data.user;
@@ -125,14 +136,14 @@ class AuthService {
     }
   }
 
+  // ── Getters ────────────────────────────────────────────────────────────────
   getCurrentUser() {
     const auth = localStorage.getItem("auth");
     if (auth) {
       try {
         const { user } = JSON.parse(auth);
         return user;
-      } catch (error) {
-        console.error("Failed to parse auth data:", error);
+      } catch {
         this.logout();
         return null;
       }
@@ -144,7 +155,7 @@ class AuthService {
     return localStorage.getItem("token");
   }
 
-  // QR Token Management
+  // ── QR Token Management ────────────────────────────────────────────────────
   getQRToken() {
     return sessionStorage.getItem("qrAccessToken");
   }
@@ -161,49 +172,38 @@ class AuthService {
     return !!this.getQRToken();
   }
 
+  // ── Logout ─────────────────────────────────────────────────────────────────
   async logout() {
     const token = this.getToken();
 
-    // Call logout endpoint to revoke refresh token
     if (token) {
       try {
         await fetch(`${API_URL}/logout`, {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          credentials: "include", // Important: sends refresh token cookie
+          headers: { Authorization: `Bearer ${token}` },
+          credentials: "include",
         });
       } catch (error) {
         console.error("Logout request failed:", error);
       }
     }
 
-    // Clear local storage
     localStorage.removeItem("token");
     localStorage.removeItem("auth");
-
-    // Clear QR token if exists
     this.clearQRToken();
   }
 
   isAuthenticated() {
-    const token = this.getToken();
-    const qrToken = this.getQRToken();
-    return !!(token || qrToken);
+    return !!(this.getToken() || this.getQRToken());
   }
 
-  // Enhanced fetchWithAuth with automatic token refresh AND QR token support
+  // ── fetchWithAuth — automatic token refresh + QR token support ────────────
   async fetchWithAuth(url, options = {}) {
-    // Check for QR token first
     const qrToken = this.getQRToken();
 
     if (qrToken) {
-      // QR token access - add as query parameter
       const separator = url.includes("?") ? "&" : "?";
-      const qrUrl = `${url}${separator}qrToken=${qrToken}`;
-
-      return fetch(qrUrl, {
+      return fetch(`${url}${separator}qrToken=${qrToken}`, {
         ...options,
         headers: {
           ...options.headers,
@@ -212,33 +212,27 @@ class AuthService {
       });
     }
 
-    // Regular authenticated access
     const token = this.getToken();
 
-    if (!token) {
-      throw new Error("No authentication token found");
-    }
+    if (!token) throw new Error("No authentication token found");
 
-    const makeRequest = async (accessToken) => {
-      return fetch(url, {
+    const makeRequest = async (accessToken) =>
+      fetch(url, {
         ...options,
         headers: {
           ...options.headers,
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-        credentials: "include", // Important: includes cookies
+        credentials: "include",
       });
-    };
 
     let response = await makeRequest(token);
 
-    // If token expired, try to refresh
     if (response.status === 401) {
       const data = await response.json();
 
       if (data.code === "TOKEN_EXPIRED") {
-        // If already refreshing, wait for it
         if (this.isRefreshing) {
           return new Promise((resolve) => {
             this.subscribeTokenRefresh((newToken) => {
@@ -250,12 +244,9 @@ class AuthService {
         this.isRefreshing = true;
 
         try {
-          // Refresh the token
           const newToken = await this.refreshAccessToken();
           this.isRefreshing = false;
           this.onTokenRefreshed(newToken);
-
-          // Retry the original request with new token
           response = await makeRequest(newToken);
         } catch (refreshError) {
           this.isRefreshing = false;
@@ -264,7 +255,6 @@ class AuthService {
           throw refreshError;
         }
       } else if (data.code === "INVALID_TOKEN" || data.code === "NO_TOKEN") {
-        // Token is completely invalid, logout
         this.logout();
         window.location.href = "/login";
       }
@@ -273,7 +263,7 @@ class AuthService {
     return response;
   }
 
-  // Helper method for change password
+  // ── Change password ────────────────────────────────────────────────────────
   async changePassword(username, currentPassword, newPassword) {
     const response = await this.fetchWithAuth(`${API_URL}/change-password`, {
       method: "POST",
@@ -286,16 +276,11 @@ class AuthService {
       throw new Error(data.error || "Password change failed");
     }
 
-    // Update stored token
     localStorage.setItem("token", data.token);
     const auth = JSON.parse(localStorage.getItem("auth") || "{}");
     localStorage.setItem(
       "auth",
-      JSON.stringify({
-        ...auth,
-        user: data.user,
-        token: data.token,
-      }),
+      JSON.stringify({ ...auth, user: data.user, token: data.token }),
     );
 
     return data;
