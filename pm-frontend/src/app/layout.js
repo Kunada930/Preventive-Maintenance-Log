@@ -3,6 +3,7 @@ import "./globals.css";
 import { AuthProvider } from "@/app/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 export const metadata = {
   title: "Preventive Maintenance Log",
@@ -25,7 +26,9 @@ export default function RootLayout({ children }) {
           disableTransitionOnChange
         >
           <AuthProvider>
-            <ProtectedRoute>{children}</ProtectedRoute>
+            <TooltipProvider>
+              <ProtectedRoute>{children}</ProtectedRoute>
+            </TooltipProvider>
           </AuthProvider>
         </ThemeProvider>
       </body>

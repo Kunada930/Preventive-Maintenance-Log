@@ -13,6 +13,16 @@ import { logAudit } from "../middleware/audit.js";
 
 const router = express.Router();
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Lockout configuration
+// ─────────────────────────────────────────────────────────────────────────────
+const MAX_FAILED_ATTEMPTS = 3;
+const LOCK_DURATION_MS = 60 * 60 * 1000; // 1 hour in milliseconds
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Token helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Generate access token (short-lived)
 function generateAccessToken(user) {
   return jwt.sign(
@@ -26,29 +36,31 @@ function generateAccessToken(user) {
   );
 }
 
-// Generate refresh token (long-lived)
+// Generate refresh token (long-lived, random hex)
 function generateRefreshToken() {
   return crypto.randomBytes(40).toString("hex");
 }
 
-// Store refresh token in database
+// Persist refresh token in DB (7-day expiry)
 function storeRefreshToken(userId, token) {
   const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
+  expiresAt.setDate(expiresAt.getDate() + 7);
 
   db.prepare(
     "INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)",
   ).run(userId, token, expiresAt.toISOString());
 }
 
-// Clean up expired refresh tokens
+// Remove all expired refresh tokens (run on every login/refresh)
 function cleanExpiredTokens() {
   db.prepare(
     "DELETE FROM refresh_tokens WHERE expires_at < datetime('now')",
   ).run();
 }
 
-// Login route
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/auth/login
+// ─────────────────────────────────────────────────────────────────────────────
 router.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
@@ -60,12 +72,20 @@ router.post("/login", async (req, res) => {
   }
 
   try {
+    // Fetch user including the two new lockout columns
     const user = db
       .prepare(
-        "SELECT id, username, password, lastName, firstName, middleName, position, role, profile_picture, must_change_password FROM users WHERE username = ?",
+        `SELECT
+          id, username, password, lastName, firstName, middleName,
+          position, role, profile_picture, must_change_password,
+          failed_login_attempts, locked_until
+         FROM users WHERE username = ?`,
       )
       .get(username);
 
+    // ── User not found ───────────────────────────────────────────────────────
+    // Return the same generic message as a wrong password to prevent
+    // username enumeration attacks.
     if (!user) {
       return res.status(401).json({
         error: "Invalid username or password",
@@ -73,14 +93,104 @@ router.post("/login", async (req, res) => {
       });
     }
 
+    // ── Check active lockout ─────────────────────────────────────────────────
+    if (user.locked_until) {
+      const lockedUntil = new Date(user.locked_until);
+      const now = new Date();
+
+      if (now < lockedUntil) {
+        // Account is still locked — tell the user exactly how long to wait
+        const msLeft = lockedUntil - now;
+        const minutesLeft = Math.ceil(msLeft / 1000 / 60);
+
+        return res.status(423).json({
+          error: `Account is locked. Try again in ${minutesLeft} minute(s).`,
+          code: "ACCOUNT_LOCKED",
+          lockedUntil: lockedUntil.toISOString(),
+        });
+      }
+
+      // Lock window has passed — auto-reset before proceeding
+      db.prepare(
+        `UPDATE users
+         SET failed_login_attempts = 0,
+             locked_until = NULL,
+             updated_at = datetime('now')
+         WHERE id = ?`,
+      ).run(user.id);
+
+      user.failed_login_attempts = 0;
+      user.locked_until = null;
+    }
+
+    // ── Validate password ────────────────────────────────────────────────────
     const isValidPassword = await bcrypt.compare(password, user.password);
 
     if (!isValidPassword) {
+      const newAttempts = (user.failed_login_attempts ?? 0) + 1;
+
+      if (newAttempts >= MAX_FAILED_ATTEMPTS) {
+        // ── Lock the account ─────────────────────────────────────────────────
+        const lockedUntil = new Date(
+          Date.now() + LOCK_DURATION_MS,
+        ).toISOString();
+
+        db.prepare(
+          `UPDATE users
+           SET failed_login_attempts = ?,
+               locked_until = ?,
+               updated_at = datetime('now')
+           WHERE id = ?`,
+        ).run(newAttempts, lockedUntil, user.id);
+
+        // Audit the lockout event so admins can see it in the audit log
+        logAudit({
+          userId: user.id,
+          username: user.username,
+          action: "ACCOUNT_LOCKED",
+          entity: "auth",
+          entityId: user.id,
+          oldValue: null,
+          newValue: {
+            lockedUntil,
+            reason: "Exceeded maximum failed login attempts",
+          },
+          ip: req.ip,
+        });
+
+        return res.status(423).json({
+          error:
+            "Account locked due to too many failed attempts. Try again in 1 hour.",
+          code: "ACCOUNT_LOCKED",
+          lockedUntil,
+        });
+      }
+
+      // ── Increment counter, not yet locked ───────────────────────────────────
+      db.prepare(
+        `UPDATE users
+         SET failed_login_attempts = ?,
+             updated_at = datetime('now')
+         WHERE id = ?`,
+      ).run(newAttempts, user.id);
+
+      const attemptsLeft = MAX_FAILED_ATTEMPTS - newAttempts;
+
       return res.status(401).json({
-        error: "Invalid username or password",
+        error: `Invalid username or password. ${attemptsLeft} attempt(s) remaining before lockout.`,
         code: "INVALID_CREDENTIALS",
+        attemptsLeft,
       });
     }
+
+    // ── Successful login — reset lockout counters ────────────────────────────
+    db.prepare(
+      `UPDATE users
+       SET failed_login_attempts = 0,
+           locked_until = NULL,
+           updated_at = datetime('now')
+       WHERE id = ?`,
+    ).run(user.id);
 
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();
@@ -88,7 +198,7 @@ router.post("/login", async (req, res) => {
     cleanExpiredTokens();
     storeRefreshToken(user.id, refreshToken);
 
-    // Audit login
+    // Audit successful login
     logAudit({
       userId: user.id,
       username: user.username,
@@ -107,21 +217,23 @@ router.post("/login", async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    res.json({
+    return res.json({
       message: "Login successful",
       token: accessToken,
       user: formatUserResponse(user),
     });
   } catch (error) {
     console.error("Login error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       error: "An error occurred during login",
       code: "SERVER_ERROR",
     });
   }
 });
 
-// Refresh token route
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/auth/refresh
+// ─────────────────────────────────────────────────────────────────────────────
 router.post("/refresh", (req, res) => {
   const refreshToken = req.cookies.refreshToken;
 
@@ -170,25 +282,29 @@ router.post("/refresh", (req, res) => {
 
     const accessToken = generateAccessToken(user);
 
-    res.json({
+    return res.json({
       message: "Token refreshed successfully",
       token: accessToken,
     });
   } catch (error) {
     console.error("Refresh token error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       error: "Token refresh failed",
       code: "SERVER_ERROR",
     });
   }
 });
 
-// Verify token route
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/auth/verify
+// ─────────────────────────────────────────────────────────────────────────────
 router.get("/verify", authenticateToken, (req, res) => {
   try {
     const user = db
       .prepare(
-        "SELECT id, username, lastName, firstName, middleName, position, role, profile_picture, must_change_password FROM users WHERE id = ?",
+        `SELECT id, username, lastName, firstName, middleName,
+          position, role, profile_picture, must_change_password
+         FROM users WHERE id = ?`,
       )
       .get(req.user.id);
 
@@ -199,20 +315,22 @@ router.get("/verify", authenticateToken, (req, res) => {
       });
     }
 
-    res.json({
+    return res.json({
       valid: true,
       user: formatUserResponse(user),
     });
   } catch (error) {
     console.error("Verify token error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       error: "Token verification failed",
       code: "SERVER_ERROR",
     });
   }
 });
 
-// Change password route
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/auth/change-password
+// ─────────────────────────────────────────────────────────────────────────────
 router.post("/change-password", authenticateToken, async (req, res) => {
   const { currentPassword, newPassword } = req.body;
   const userId = req.user.id;
@@ -267,14 +385,20 @@ router.post("/change-password", authenticateToken, async (req, res) => {
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     db.prepare(
-      "UPDATE users SET password = ?, must_change_password = 0, updated_at = datetime('now') WHERE id = ?",
+      `UPDATE users
+       SET password = ?,
+           must_change_password = 0,
+           updated_at = datetime('now')
+       WHERE id = ?`,
     ).run(hashedPassword, userId);
 
     addPasswordToHistory(userId, user.password);
 
     const updatedUser = db
       .prepare(
-        "SELECT id, username, lastName, firstName, middleName, position, role, profile_picture, must_change_password FROM users WHERE id = ?",
+        `SELECT id, username, lastName, firstName, middleName,
+          position, role, profile_picture, must_change_password
+         FROM users WHERE id = ?`,
       )
       .get(userId);
 
@@ -284,38 +408,42 @@ router.post("/change-password", authenticateToken, async (req, res) => {
       role: user.role,
     });
 
-    // Audit password change
+    // Audit password change — never log the actual hash values
     logAudit({
       userId: userId,
       username: user.username,
       action: "UPDATE",
       entity: "auth",
       entityId: userId,
-      oldValue: null, // never log password hashes
+      oldValue: null,
       newValue: null,
       ip: req.ip,
     });
 
-    res.json({
+    return res.json({
       message: "Password changed successfully",
       token: accessToken,
       user: formatUserResponse(updatedUser),
     });
   } catch (error) {
     console.error("Change password error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       error: "An error occurred while changing password",
       code: "SERVER_ERROR",
     });
   }
 });
 
-// Get current user profile
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/auth/profile
+// ─────────────────────────────────────────────────────────────────────────────
 router.get("/profile", authenticateToken, (req, res) => {
   try {
     const user = db
       .prepare(
-        "SELECT id, username, lastName, firstName, middleName, position, role, profile_picture, must_change_password, created_at FROM users WHERE id = ?",
+        `SELECT id, username, lastName, firstName, middleName,
+          position, role, profile_picture, must_change_password, created_at
+         FROM users WHERE id = ?`,
       )
       .get(req.user.id);
 
@@ -326,19 +454,19 @@ router.get("/profile", authenticateToken, (req, res) => {
       });
     }
 
-    res.json({
-      user: formatUserResponse(user),
-    });
+    return res.json({ user: formatUserResponse(user) });
   } catch (error) {
     console.error("Get profile error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       error: "An error occurred while fetching profile",
       code: "SERVER_ERROR",
     });
   }
 });
 
-// Logout route
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/auth/logout
+// ─────────────────────────────────────────────────────────────────────────────
 router.post("/logout", authenticateToken, (req, res) => {
   const refreshToken = req.cookies.refreshToken;
 
@@ -360,9 +488,7 @@ router.post("/logout", authenticateToken, (req, res) => {
 
   res.clearCookie("refreshToken");
 
-  res.json({
-    message: "Logout successful",
-  });
+  return res.json({ message: "Logout successful" });
 });
 
 export default router;

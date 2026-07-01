@@ -16,7 +16,7 @@ import { useAuth } from "@/app/contexts/AuthContext";
 import QRCode from "qrcode";
 
 const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://172.16.21.12:4000/api";
+  process.env.NEXT_PUBLIC_API_URL || "http://172.16.20.78:4000/api";
 
 export function QRGenerator({ deviceId, deviceName }) {
   const { user: currentUser } = useAuth();

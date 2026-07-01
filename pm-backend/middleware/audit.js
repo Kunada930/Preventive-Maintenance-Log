@@ -36,7 +36,6 @@ export function logAudit({
   ip,
 }) {
   try {
-    console.log("Raw IP from req.ip:", ip);
     db.prepare(
       `
       INSERT INTO audit_logs (user_id, username, action, entity, entity_id, old_value, new_value, ip_address)

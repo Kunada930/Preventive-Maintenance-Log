@@ -99,7 +99,6 @@ router.post(
         )
         .get(id);
 
-      // ✅ Audit profile picture update
       logAudit({
         userId: req.user.id,
         username: req.user.username,
@@ -164,7 +163,6 @@ router.delete("/me/profile-picture", (req, res) => {
       )
       .get(id);
 
-    // ✅ Audit profile picture deletion
     logAudit({
       userId: req.user.id,
       username: req.user.username,
@@ -227,6 +225,7 @@ router.get("/", (req, res) => {
       .prepare(
         `SELECT id, username, lastName, firstName, middleName,
           position, role, profile_picture, must_change_password,
+          failed_login_attempts, locked_until,
           created_at, updated_at
          FROM users ${whereClause}
          ORDER BY created_at DESC
@@ -261,6 +260,7 @@ router.get("/:id", (req, res) => {
       .prepare(
         `SELECT id, username, lastName, firstName, middleName,
           position, role, profile_picture, must_change_password,
+          failed_login_attempts, locked_until,
           created_at, updated_at FROM users WHERE id = ?`,
       )
       .get(id);
@@ -363,7 +363,6 @@ router.post("/", async (req, res) => {
       )
       .get(result.lastInsertRowid);
 
-    // ✅ Audit user creation
     logAudit({
       userId: req.user.id,
       username: req.user.username,
@@ -371,7 +370,7 @@ router.post("/", async (req, res) => {
       entity: "user",
       entityId: newUser.id,
       oldValue: null,
-      newValue: formatUserResponse(newUser), // formatUserResponse strips the password
+      newValue: formatUserResponse(newUser),
       ip: req.ip,
     });
 
@@ -473,7 +472,6 @@ router.put("/:id", async (req, res) => {
       )
       .get(id);
 
-    // ✅ Audit with before/after snapshot (no passwords included)
     logAudit({
       userId: req.user.id,
       username: req.user.username,
@@ -493,6 +491,72 @@ router.put("/:id", async (req, res) => {
     console.error("Update user error:", error);
     res.status(500).json({
       error: "Failed to update user",
+      code: "SERVER_ERROR",
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PATCH /api/users/:id/unlock  (admin only)
+// Manually unlock a locked-out account before the 1-hour window expires.
+// ─────────────────────────────────────────────────────────────────────────────
+router.patch("/:id/unlock", isAdmin, (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = db
+      .prepare(
+        `SELECT id, username, locked_until, failed_login_attempts
+         FROM users WHERE id = ?`,
+      )
+      .get(id);
+
+    if (!user) {
+      return res.status(404).json({
+        error: "User not found",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    // Allow the call even if the account isn't currently locked —
+    // it's a safe idempotent reset either way.
+    const wasLocked = !!user.locked_until;
+
+    db.prepare(
+      `UPDATE users
+       SET failed_login_attempts = 0,
+           locked_until = NULL,
+           updated_at = datetime('now')
+       WHERE id = ?`,
+    ).run(id);
+
+    logAudit({
+      userId: req.user.id,
+      username: req.user.username,
+      action: "ACCOUNT_UNLOCKED",
+      entity: "users",
+      entityId: parseInt(id),
+      oldValue: {
+        locked_until: user.locked_until,
+        failed_login_attempts: user.failed_login_attempts,
+      },
+      newValue: {
+        locked_until: null,
+        failed_login_attempts: 0,
+        unlockedBy: req.user.username,
+      },
+      ip: req.ip,
+    });
+
+    return res.json({
+      message: wasLocked
+        ? `Account for '${user.username}' has been unlocked successfully.`
+        : `Account for '${user.username}' was not locked, but attempt counter has been reset.`,
+    });
+  } catch (error) {
+    console.error("Unlock user error:", error);
+    return res.status(500).json({
+      error: "Failed to unlock user account",
       code: "SERVER_ERROR",
     });
   }
@@ -543,7 +607,6 @@ router.post(
         )
         .get(id);
 
-      // ✅ Audit admin profile picture update
       logAudit({
         userId: req.user.id,
         username: req.user.username,
@@ -608,7 +671,6 @@ router.delete("/:id/profile-picture", (req, res) => {
       )
       .get(id);
 
-    // ✅ Audit admin profile picture deletion
     logAudit({
       userId: req.user.id,
       username: req.user.username,
@@ -667,7 +729,6 @@ router.delete("/:id", (req, res) => {
 
     db.prepare("DELETE FROM users WHERE id = ?").run(id);
 
-    // ✅ Audit user deletion (capture full record before it's gone)
     logAudit({
       userId: req.user.id,
       username: req.user.username,
@@ -699,7 +760,8 @@ router.get("/stats/overview", (req, res) => {
           SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as admin_count,
           SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) as user_count,
           SUM(CASE WHEN must_change_password = 1 THEN 1 ELSE 0 END) as pending_password_change,
-          SUM(CASE WHEN profile_picture IS NOT NULL THEN 1 ELSE 0 END) as users_with_picture
+          SUM(CASE WHEN profile_picture IS NOT NULL THEN 1 ELSE 0 END) as users_with_picture,
+          SUM(CASE WHEN locked_until IS NOT NULL AND locked_until > datetime('now') THEN 1 ELSE 0 END) as locked_accounts
          FROM users`,
       )
       .get();
