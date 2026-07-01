@@ -48,7 +48,7 @@ router.post("/generate", authenticateToken, (req, res) => {
       )
       .run(token, deviceId, req.user.id, expiresAt.toISOString());
 
-    const qrUrl = `${process.env.FRONTEND_URL || "http://172.16.21.12:3000"}/pm-history?token=${token}`;
+    const qrUrl = `${process.env.FRONTEND_URL || "http://172.16.20.78:3000"}/pm-history?token=${token}`;
 
     // Audit: who generated access for which device
     logAudit({

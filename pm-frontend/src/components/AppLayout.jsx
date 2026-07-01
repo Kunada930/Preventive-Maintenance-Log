@@ -211,7 +211,7 @@ export default function AppLayout({ children }) {
                 <div className="relative w-8 h-8 flex-shrink-0">
                   {user?.profilePicture && user.profilePicture.trim() !== "" ? (
                     <Image
-                      src={`${process.env.NEXT_PUBLIC_API_URL || "http://172.16.21.12:4000"}/${user.profilePicture}`}
+                      src={`${process.env.NEXT_PUBLIC_API_URL || "http://172.16.20.78:4000"}/${user.profilePicture}`}
                       alt={getFullName()}
                       fill
                       className="rounded-lg object-cover"

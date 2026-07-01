@@ -25,7 +25,7 @@ const __dirname = path.dirname(__filename);
 //Middleware (Cookie Parser, CORS, JSON Parsing)
 app.use(
   cors({
-    origin: [process.env.FRONTEND_URL || "http://172.16.21.12:3000"],
+    origin: [process.env.FRONTEND_URL || "http://172.16.20.78:3000"],
     credentials: true, // Allow cookies to be sent
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -91,6 +91,6 @@ app.use((err, req, res, next) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Local: http://localhost:${PORT}`);
-  console.log(`Network: http://172.16.21.12:${PORT}`);
+  console.log(`Network: http://172.16.20.78:${PORT}`);
   console.log(`Frontend URL: ${process.env.FRONTEND_URL}`);
 });

@@ -29,7 +29,7 @@ import { Separator } from "@/components/ui/separator";
 import { authService } from "@/lib/auth";
 
 const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://172.16.21.12:4000/api";
+  process.env.NEXT_PUBLIC_API_URL || "http://172.16.20.78:4000/api";
 
 export default function PublicPMHistoryPage() {
   const searchParams = useSearchParams();

@@ -1,7 +1,7 @@
 // lib/auth.js
 
 const API_URL =
-  process.env.NEXT_PUBLIC_AUTH_URL || "http://172.16.21.12:4000/api/auth";
+  process.env.NEXT_PUBLIC_AUTH_URL || "http://172.16.20.78:4000/api/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Structured auth error — carries the backend's code, attemptsLeft, and
