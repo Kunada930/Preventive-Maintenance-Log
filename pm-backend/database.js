@@ -233,6 +233,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_users_locked_until ON users(locked_until);
 `);
 
+// Index for PM Logs queries — speeds up filtering by device_id and date
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_pm_logs_device_date ON pm_logs(device_id, date);
+`);
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_pm_logs_device_date ON pm_logs(device_id, date);
+`);
+
 console.log("Connected to PM Log Database");
 
 export default db;
